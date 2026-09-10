@@ -1,5 +1,7 @@
 # AstroLogbuch
 
+<img src="astrologbuch_logo.png" alt="AstroLogbuch Logo" width="200">
+
 Liest einen Astrofoto-Ordner automatisch aus und zeigt Status, Belichtungszeit,
 Kamera/Filter und das optimale Beobachtungsfenster für jedes Projekt in einem
 lokalen Dashboard – ohne Installation, ohne Internetzwang, ohne Cloud.
