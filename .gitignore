@@ -1,0 +1,30 @@
+# Persoenliche Einstellungen und Zwischenspeicher (pro Nutzer, nicht fuer das Repo)
+AstroLogbuch_config.json
+AstroLogbuch_thumb_cache.json
+AstroLogbuch_object_cache.json
+
+# Generierte Ausgabe (wird bei jedem Lauf neu erzeugt)
+AstroLogbuch.html
+astro_dashboard.html
+
+# Gebaute Programme/Build-Artefakte (Distribution laeuft ueber GitHub Releases,
+# nicht ueber den Git-Verlauf)
+AstroLogbuch.exe
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# Interne Entwicklungsnotizen, nicht fuer die Oeffentlichkeit gedacht
+CLAUDE.md
+
+# Marketing-/Blog-Material und lokale Distributions-Zips, nicht Teil des Programms
+Blog/
+Download/
+Logo/
+Infografik/
+
+# Test-/Laufzeit-Logs
+run_stdout.log
+run_stderr.log

@@ -1,0 +1,213 @@
+CHANGELOG - AstroLogbuch
+=========================
+
+Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
+oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
+
+v1.7.0 - 2026-09-09
+--------------------
+- Die AstroLogbuch.exe ist jetzt alleine weitergebbar, ohne die Datei
+  AstroLogbuch.ico daneben legen zu muessen. Bisher wurde das Fenster-/
+  Taskleisten-Icon zur Laufzeit immer explizit aus dieser externen Datei
+  geladen (auch wenn sie in der EXE selbst schon eingebettet war, siehe
+  pyinstaller --icon=...). Jetzt greift dieser explizite Weg nur noch im
+  Dev-Betrieb ("py astro_dashboard.py"); als gebaute EXE nutzt pywebview
+  von sich aus das in der EXE eingebettete Icon (WinForms-Fallback ueber
+  sys.executable). Die .ico-Datei bleibt fuer den Build-Schritt selbst
+  weiterhin noetig (--icon=AstroLogbuch.ico), nur nicht mehr fuer die
+  Weitergabe der fertigen EXE.
+
+v1.6.1 - 2026-09-09
+--------------------
+- Die Checkbox "Fertige Projekte ausblenden" im Panel "Jetzt gut zu
+  erreichen" ist jetzt standardmaessig angehakt.
+
+v1.6.0 - 2026-09-09
+--------------------
+- Neu: Im Panel "Jetzt gut zu erreichen" gibt es neben der Monatsleiste
+  jetzt eine Checkbox "Fertige Projekte ausblenden". Bisher wurden dort
+  auch bereits fertiggestellte Projekte aufgelistet, obwohl die fuer die
+  Planung neuer Aufnahmen meist nicht mehr relevant sind - mit aktivierter
+  Checkbox tauchen nur noch Projekte mit einem anderen Status auf.
+
+v1.5.0 - 2026-09-09
+--------------------
+- Standardsortierung der Tabelle ist jetzt "Letzte Bearbeitung", neueste
+  zuerst (vorher Status). Per Klick auf eine andere Spaltenueberschrift
+  laesst sich wie gewohnt umsortieren.
+- Bugfix: Das Programmfenster startete jedes Mal an einer anderen,
+  scheinbar zufaelligen Position. Ursache war die verwendete
+  WinForms-Standardzentrierung (FormStartPosition.CenterScreen), die sich
+  in der Praxis nicht zuverlaessig auf denselben Punkt festlegt. Das
+  Fenster wird jetzt explizit auf dem Hauptbildschirm zentriert
+  (webview.screens()) und startet dadurch immer an derselben, mittigen
+  Position.
+- Die Fenstergroesse (Standard 1680x1020) wird dabei automatisch auf die
+  aktuelle Bildschirmaufloesung begrenzt (mit etwas Rand fuer
+  Taskleiste/Fensterrahmen), damit das Fenster auf kleineren Bildschirmen
+  nicht ueber den sichtbaren Bereich hinausragt.
+
+v1.4.0 - 2026-09-09
+--------------------
+- Neu: Im Panel "Jetzt gut zu erreichen" gibt es jetzt eine Monatsleiste
+  mit allen zwoelf Monaten oberhalb der Objektliste. Per Klick auf einen
+  Monat (z. B. Dezember) zeigt das Panel die Objekte, die in genau diesem
+  Monat gut zu erreichen sind, statt immer nur im aktuellen Monat. Der
+  tatsaechliche aktuelle Monat bleibt dabei farblich markiert, auch wenn
+  gerade ein anderer Monat angezeigt wird; die Ueberschrift zeigt "Jetzt
+  (Sep) gut zu erreichen" nur, wenn der aktuelle Monat ausgewaehlt ist,
+  sonst schlicht z. B. "Dez gut zu erreichen". Hat ein Monat keine
+  passenden Objekte, erscheint ein Hinweistext statt einer leeren Liste.
+
+v1.3.0 - 2026-09-09
+--------------------
+- Neu: Versionierung eingefuehrt (APP_VERSION-Konstante im Skript). Wird
+  im Dashboard oben rechts angezeigt und beim Start in der Konsole
+  ausgegeben. Ab jetzt wird bei jeder inhaltlichen Aenderung die Version
+  erhoeht und ein Changelog-Eintrag ergaenzt.
+- Bugfix: Klick auf eine Objekt-Karte im Panel "Jetzt gut zu erreichen"
+  sprang zur falschen Stelle bzw. gar nicht (scrollY blieb bei 0). Ursache:
+  Element.scrollIntoView({behavior:"smooth"}) und auch
+  window.scrollTo({behavior:"smooth"}) haben in dieser WebView2-Umgebung
+  schlicht nicht gescrollt (reproduziert und isoliert). Fix: eigene
+  scrollElementIntoView()-Funktion mit behavior:"instant" statt "smooth",
+  fuer denselben Zweck auch beim Klick auf die Statistik-Kacheln.
+- Textbereinigung: Deutsche Umlaute (ä/ö/ü) waren im sichtbaren
+  Programmtext inkonsequent verwendet - teils korrekt (z. B. "Höhepunkt"
+  in den "Jetzt gut zu erreichen"-Karten), teils als ae/oe/ue geschrieben
+  (z. B. dieselbe Spalte in der Haupttabelle, Einstellungen-Texte,
+  Fusszeilen-Legende, Fehlermeldungen). Durchgehend auf echte Umlaute
+  vereinheitlicht; "ss" bleibt bewusst wie bisher (kein "ß"), gemaess
+  bisherigem Sprachstil.
+- Objektname in der Tabelle zeigt nicht mehr die "- Done"-Markierung aus
+  dem Ordnernamen (der Status wird bereits ueber die Fertig-Pille
+  angezeigt, das war redundant). Wirkt nur auf den angezeigten Namen; der
+  Ordnername selbst (fuer Status-Erkennung, Ordner-oeffnen usw.) bleibt
+  unveraendert.
+- Spalte "Filter/Aufnahmen" listet nicht mehr zusaetzlich jede einzelne
+  Nacht-/Session-Unterordnerbezeichnung auf (machte die Zeile bei
+  Projekten mit vielen Naechten sehr hoch und war gegenueber der Spalte
+  "Std. gesamt" redundant) - nur noch die Zusammenfassung je Filter.
+- Kopfzeile: Pfad- und "Lokaler Scan"-Hinweis stand bisher oben links
+  ueber dem Logo in Akzentfarbe; jetzt rechts bei den anderen Fakten
+  (Stand, Standort), in derselben schlichten Farbe, damit oberhalb des
+  Logos nichts mehr steht.
+
+v1.2.0 - 2026-09-09
+--------------------
+- Neu: Objekt-Karten im Panel "Jetzt gut zu erreichen" sind anklickbar und
+  springen zur passenden Tabellenzeile (Filter werden automatisch
+  zurueckgesetzt, falls die Zeile sonst ausgeblendet waere; die Zeile wird
+  kurz farblich hervorgehoben).
+- Neu: Ortsnamen-Suche fuer den Breitengrad in den Einstellungen. Wer den
+  Breitengrad nicht auswendig kennt, kann stattdessen einen Ortsnamen
+  eingeben und ueber "Koordinate suchen" automatisch nachschlagen lassen
+  (Dienst: Nominatim/OpenStreetMap, nur per Knopfdruck ausgeloest, nie
+  automatisch/wiederholt gemaess deren Nutzungsbedingungen). Das Ergebnis
+  wird nur zur Kontrolle ins Feld eingetragen, nicht automatisch
+  gespeichert. Verwendet denselben Hard-Timeout-Mechanismus wie die
+  bestehende Online-Namensaufloesung.
+
+v1.1.0 - 2026-09-09
+--------------------
+- Neu: Spalte "Letzte Bearbeitung" in der Tabelle - zeigt das juengste
+  Aenderungsdatum unter allen Dateien eines Projekts (aus denselben
+  Verzeichnis-Metadaten, die der Scan ohnehin schon einliest, kein
+  zusaetzlicher Dateizugriff). Spalte ist wie alle anderen per Klick auf
+  den Spaltenkopf sortierbar.
+- Neu: Die Statistik-Kacheln oben (Projekte gesamt/Fertig/In Arbeit/
+  Geplant/Status unklar) sind jetzt anklickbar und filtern die Tabelle
+  direkt auf den jeweiligen Status (identisch zu den Status-Chips im
+  Filterbereich, nur bequemer erreichbar); "Status unklar" fasst dabei
+  wie schon die Kachel selbst die drei Status Rohdaten/Unklar/Kaum
+  begonnen zusammen.
+- Layout-Umbau: Die Tabelle hatte einen eigenen inneren Scrollbalken
+  (max-height:70vh) zusaetzlich zum Scrollen der ganzen Seite - zwei
+  Scrollbalken fuer dieselbe Richtung, verwirrend. Jetzt scrollt nur noch
+  die ganze Seite; der "klebende" Tabellenkopf bleibt dabei weiterhin
+  oben sichtbar (haengt sich jetzt an die Seite selbst statt an den
+  inneren Container). Dabei zwei CSS-Fallstricke ausgeraeumt: (1)
+  "overflow-x:auto" allein zwingt Browser laut Spezifikation dazu, auch
+  overflow-y auf "auto" zu setzen (fuehrte sonst durch die Hintertuer
+  denselben Scrollbalken wieder ein); (2) "overflow:hidden" am
+  umschliessenden Panel (fuer die runden Ecken) legt zugleich den
+  Bezugsrahmen fuer position:sticky fest und haette den klebenden
+  Tabellenkopf sonst wirkungslos gemacht.
+
+v1.0.0 - 2026-09-09
+--------------------
+- Bugfix (Hauptursache der Aussetzer, auch WAEHREND normaler Benutzung,
+  nicht nur beim Laden): Die Api-Klasse legte das pywebview-Fensterobjekt
+  unter self.window ab (oeffentliches Attribut). pywebview baut seine
+  JS-API-Bruecke (window.pywebview.api.*) bei JEDER Navigation neu auf und
+  durchwandert dabei rekursiv ALLE oeffentlichen Attribute dieses
+  Api-Objekts (siehe get_functions() in webview/util.py) - inklusive also
+  dieses self.window, was direkt ins rohe native .NET/WinForms-Fenster-
+  objekt hineinfuehrte. Dort verheddert sich der Durchlauf in einer
+  Endlosrekursion (z. B. Rectangle.Empty.Empty.Empty...), weil pythonnet
+  bei jedem Zugriff ein neues Wrapper-Objekt erzeugt und die
+  Schon-besucht-Erkennung das deshalb nicht abfaengt - sichtbar als
+  wiederholte "[pywebview] Error while processing
+  window.native.AccessibilityObject...maximum recursion depth exceeded"
+  im Log, und als voellig eingefrorenes Programmfenster ("Keine
+  Rueckmeldung"), auch mitten in der normalen Benutzung (jede Navigation
+  loest das erneut aus). Trat bei praktisch jedem Testlauf in dieser
+  Sitzung auf, war aber bis jetzt nicht als eigentliche Ursache erkannt.
+  Fix: Attribut in self._window umbenannt (Unterstrich), pywebviews
+  get_functions() ueberspringt damit-beginnende Attribute von vornherein.
+  Nach dem Fix: stderr in mehreren Testlaeufen durchgehend leer, Fenster
+  ueber 30 Sekunden Dauerbeobachtung responsiv.
+- Bugfix (Stabilitaet): make_thumbnail() oeffnet und liest die Bilddatei
+  tatsaechlich (nicht nur Metadaten) - das kann ein Echtzeit-Virenschutz
+  am gruendlichsten scannen. Live beim Nutzer beobachtet: Fenstertitel
+  "AstroLogbuch (Keine Rueckmeldung)", haengt mitten in Phase 2
+  ("Werte aus / erzeuge Vorschaubild"). Wie schon bei der
+  Online-Namensaufloesung laeuft der Aufruf jetzt in einem
+  Hintergrund-Thread mit einer harten 5-Sekunden-Notbremse
+  (THUMBNAIL_TIMEOUT_SECONDS); wird sie ueberschritten, wird das
+  Vorschaubild fuer diesen Lauf uebersprungen (keine Fehlermeldung,
+  Hinweis im Log/Konsole) und beim naechsten Lauf erneut versucht,
+  statt das Programm zu blockieren.
+- Konsolenfenster entfernt: EXE wird jetzt mit --noconsole gebaut (siehe
+  ANLEITUNG.txt Schritt 2). Fehler beim Einlesen erscheinen stattdessen
+  als Fehlerseite im Programmfenster selbst.
+- Splash-Screen: Abstand zwischen Logo und Fortschrittsbalken vergroessert
+  (lagen vorher zu eng aufeinander). Bewusst keine kuenstliche
+  Mindestanzeigedauer eingebaut - ist der Ordner klein/gecacht, darf der
+  Splash auch nur kurz aufblitzen.
+- Anleitung und Changelog laufen ab jetzt als reine .txt-Dateien statt
+  Markdown (ANLEITUNG.txt, CHANGELOG.txt).
+- Logo/Icon: eigene Logos (Nutzer-Vorgabe) eingebaut - kleines
+  Teleskop-Icon als Programm-/Fenster-Icon (AstroLogbuch.ico), grosses
+  Mondsichel-Logo mit Schriftzug als Splash-Screen-Grafik (abgerundete
+  Ecken) und als Kopfzeilen-Logo im Dashboard (ersetzt den bisherigen
+  reinen Text-Titel, als abgerundetes dunkles Badge, damit es in
+  hellem wie dunklem Dashboard-Modus lesbar bleibt).
+- Fenster vergroessert: 1440x900 -> 1680x1020.
+- Splash-Screen eingefuehrt: zeigt waehrend des Einlesens Logo,
+  Fortschrittsbalken und laufend aktualisierte Statuszeile (dieselben
+  Zeilen wie zuvor nur im Konsolenfenster) statt nur eines Drehsymbols.
+- Performance/Stabilitaet: scan_project() liest Dateigroesse und
+  Aenderungszeit jetzt direkt aus dem Verzeichnis-Listing (os.scandir)
+  statt ueber einen zusaetzlichen os.path.getsize()-Aufruf pro Datei.
+  Grund: Bei Ordnern mit sehr vielen Dateien konnte ein
+  Echtzeit-Virenschutz (Windows Defender) einzelne Dateizugriffe
+  abfangen und das Programm dadurch minutenlang haengen lassen (per
+  faulthandler-Diagnose reproduziert und lokalisiert). Der Umbau
+  halbiert die Dateisystemzugriffe pro Datei; das zugrundeliegende
+  Virenschutz-Verhalten kann bei sehr grossen Archiven trotzdem noch
+  gelegentlich auftreten (siehe ANLEITUNG.txt, Abschnitt "Falls das
+  Programm beim Einlesen laenger haengen bleibt").
+- Bugfix: window.load_url() nach dem ersten Scan war bei identischer URL
+  ein No-Op fuer WebView2 (der Windows-Backend von pywebview) - das
+  Fenster blieb dadurch nach dem allerersten Einlesen dauerhaft auf dem
+  Ladebildschirm haengen. Behoben durch einen Cache-Buster in der
+  Reload-URL.
+- Bugfix: Online-Namensaufloesung (Sesame/CDS) konnte trotz gesetztem
+  Timeout unbegrenzt haengen bleiben (beobachtet unter Windows/Python
+  3.14, vermutlich eine TLS-Renegotiation-Eigenheit des Servers). Der
+  Netzwerk-Request laeuft jetzt in einem Hintergrund-Thread mit einer
+  vom Socket unabhaengigen Notbremse.
+- Erste EXE unter Windows gebaut und getestet (Uebergabe aus einer
+  Cowork-Cloud-Sitzung ohne Fenstersystem/Windows-Zugriff, siehe
+  urspruengliche Projektnotiz).

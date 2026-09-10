@@ -1,0 +1,554 @@
+ASTROLOGBUCH - EIGENSTAENDIGES SCAN-PROGRAMM
+=============================================
+
+Dieses Programm liest einen Astro-Ordner ein und zeigt daraus ein
+Dashboard mit Status, Naechten, Belichtungszeiten und optimalem
+Beobachtungsfenster an, lokal bei dir, mit dem aktuellen Stand bei jedem
+Start. Es veraendert und loescht keine Dateien, es liest nur.
+
+Fuer die allermeisten Nutzer reicht die fertige Datei AstroLogbuch.exe -
+einfach doppelklicken, siehe Abschnitt BENUTZUNG gleich im Anschluss.
+Keine Installation, kein Python, keine weitere Software noetig. Nur wer
+den Quellcode (astro_dashboard.py) selbst anpassen und daraus neu eine
+EXE bauen moechte, braucht den Anhang ganz am Ende dieser Anleitung.
+
+Wichtig zu dieser Version: Das Programm laeuft standardmaessig in einem
+eigenen Programmfenster statt im Browser, und der Astro-Ordner sowie alle
+Kamera-/Filterbezeichnungen werden nicht im Skript selbst eingetragen,
+sondern ueber ein Einstellungen-Fenster im Programm gewaehlt und dauerhaft
+gespeichert. Damit laesst sich das Tool auch von anderen Personen mit
+anderen Kameras/Aufnahmesystemen nutzen, ohne den Code anzufassen (siehe
+"Fuer andere Nutzer" weiter unten).
+
+BENUTZUNG
+-----------
+
+Einfach AstroLogbuch.exe doppelklicken. Es oeffnet sich ein eigenes
+Programmfenster (kein Browser-Tab, keine Adressleiste) mit dem Dashboard.
+
+Waehrend des Einlesens zeigt das Fenster einen Splash-Screen mit Logo,
+Fortschrittsbalken und einer laufend aktualisierten Statuszeile (dieselben
+Zeilen, die frueher nur im Konsolenfenster standen, z. B.
+"[12/78] Lese Ordner: ..."). Das ist wichtig, weil die EXE ohne
+Konsolenfenster gebaut ist (--noconsole), du sonst also waehrend des
+ersten Einlesens keinerlei Rueckmeldung haettest. Ist der Ordner klein
+oder schon vollstaendig zwischengespeichert, kann das Einlesen auch mal so
+schnell gehen, dass vom Splash kaum mehr als ein kurzes Aufblitzen zu
+sehen ist - das ist normal, eine kuenstliche Verzoegerung baut das
+Programm absichtlich nicht ein. Sobald der Scan fertig ist, wechselt das
+Fenster automatisch zum eigentlichen Dashboard.
+
+Beim allerersten Start (oder wenn der gespeicherte Ordner nicht mehr
+existiert) fragt das Programm zuerst per Ordnerauswahl-Dialog nach deinem
+Astro-Ordner. Diese Wahl merkt sich das Programm danach dauerhaft in der
+Datei AstroLogbuch_config.json (liegt neben der .exe) - beim naechsten
+Start wird direkt derselbe Ordner wieder eingelesen, ohne erneut zu
+fragen. Diese Datei enthaelt deine persoenlichen Einstellungen und sollte
+deshalb nicht an andere Nutzer weitergegeben werden (die fragt beim
+eigenen ersten Start einfach selbst nach ihrem eigenen Ordner).
+
+Oben rechts neben dem Zahnrad steht ausserdem die aktuell laufende
+Version (z. B. "AstroLogbuch v1.7.0") - hilfreich, um zu erkennen, ob
+eine neu gebaute EXE tatsaechlich den neuesten Stand hat. Siehe
+CHANGELOG.txt fuer die Aenderungen je Version.
+
+Einstellungen jederzeit aendern: Oben rechts im Dashboard gibt es ein
+Zahnrad-Symbol. Darueber lassen sich jederzeit aendern:
+- der Astro-Ordner (Knopf "Ordner waehlen..."),
+- der Standort (Breitengrad, fuer die Sichtbarkeitsberechnung) - kennst du
+  den Breitengrad nicht auswendig, kannst du stattdessen einen Ortsnamen
+  eingeben (z. B. "Zuerich") und ueber "Koordinate suchen" automatisch
+  nachschlagen lassen (Dienst: Nominatim/OpenStreetMap, braucht kurz
+  Internet); das Ergebnis wird nur zur Kontrolle ins Breitengrad-Feld
+  eingetragen, gespeichert wird erst beim eigentlichen "Speichern"-Knopf,
+- ob unbekannte Objekte online nachgeschlagen werden duerfen,
+- ob Vorschaubilder angezeigt werden,
+- eigene Kamera- und Filterbezeichnungen (siehe "Fuer andere Nutzer"
+  unten),
+- ausgeschlossene Ordnernamen und Kalibrier-Schluesselwoerter.
+
+Nach "Speichern & neu einlesen" liest das Programm den (ggf. neuen)
+Ordner sofort mit den neuen Einstellungen neu ein, ganz ohne Neustart.
+
+Ein Klick auf eine Tabellenzeile oeffnet weiterhin den zugehoerigen Ordner
+im Explorer, genau wie bisher (siehe "Ordner oeffnen" weiter unten) - das
+Programm muss dafuer einfach nur laufen.
+
+Die Statistik-Kacheln oben (Projekte gesamt/Fertig/In Arbeit/Geplant/
+Status unklar) sind anklickbar und filtern die Tabelle direkt auf den
+jeweiligen Status. Die Tabelle selbst laesst sich durch Klick auf einen
+Spaltenkopf sortieren (nochmaliger Klick kehrt die Richtung um), unter
+anderem nach der Spalte "Letzte Bearbeitung" (juengstes Aenderungsdatum
+unter allen Dateien eines Projekts) - das ist auch die Voreinstellung
+beim Start.
+
+Im Panel "Jetzt gut zu erreichen" laesst sich ueber die Monatsleiste durch
+alle zwoelf Monate blaettern - ein Klick auf einen Monat zeigt, welche
+Objekte in genau diesem Monat gut zu erreichen sind, statt immer nur im
+aktuellen. Die Checkbox "Fertige Projekte ausblenden" (standardmaessig
+angehakt) blendet dabei bereits fertiggestellte Projekte aus der Liste
+aus. Die Objekt-Karten selbst sind ebenfalls anklickbar: ein Klick springt
+direkt zur passenden Tabellenzeile (Filter werden dafuer automatisch
+zurueckgesetzt, falls die Zeile sonst ausgeblendet waere) und hebt sie
+kurz farblich hervor.
+
+Falls das Programmfenster gar nicht erscheint oder sich seltsam verhaelt,
+braucht Windows zusaetzlich die "Microsoft Edge WebView2 Runtime", mit der
+das Fenster dargestellt wird. Auf einem aktuellen Windows 10 oder 11 ist
+die in aller Regel bereits vorinstalliert; falls nicht, laesst sie sich
+kostenlos direkt bei Microsoft nachinstallieren. Fehlt sie dauerhaft,
+faellt das Programm automatisch in den Browser-Modus zurueck (siehe
+naechster Abschnitt).
+
+Falls es einmal hakt: Die AstroLogbuch.exe laeuft ohne Konsolenfenster;
+ein Fehler beim Einlesen erscheint dann als Fehlerseite direkt im
+Programmfenster selbst, das reicht fuer die allermeisten Faelle. Taucht
+dort eine Fehlermeldung auf, schick sie mir einfach, dann kann ich gezielt
+nachbessern.
+
+Meldungen wie "More samples per pixel than can be decoded" (von der
+Bibliothek libtiff) sind kein Fehler, sondern eine Warnung beim Versuch,
+ein Vorschaubild aus einer ungewoehnlichen TIFF-Datei zu erzeugen (z. B.
+mehr Farb-/Datenkanaele als ein normales Foto). Das Skript faengt das ab,
+ueberspringt fuer dieses eine Projekt einfach das Vorschaubild und macht
+mit dem naechsten Ordner weiter.
+
+Falls das Programm beim Einlesen laenger haengen bleibt
+(Fortschrittsbalken bewegt sich minutenlang nicht): Das war bei einem Test
+einmal reproduzierbar und liess sich per Diagnose eindeutig auf einen
+einzelnen, ganz gewoehnlichen Dateisystem-Aufruf zurueckfuehren (Ordner
+auflisten bzw. eine Datei anfassen), der etliche Sekunden blockierte,
+obwohl Windows das normalerweise sofort beantwortet - ein klassisches
+Anzeichen dafuer, dass ein Echtzeit-Virenschutz (z. B. Windows Defender)
+einzelne Dateizugriffe im Astro-Ordner abfaengt und verzoegert, besonders
+bei Ordnern mit sehr vielen Dateien. Das Skript selbst wurde daraufhin so
+umgebaut, dass es pro Datei nur noch einen einzigen Dateisystemzugriff
+statt zwei braucht (weniger Angriffsflaeche dafuer), das Problem liegt
+aber ausserhalb des Programms und kann bei sehr grossen Archiven weiterhin
+gelegentlich auftreten. Wer das zuverlaessig loswerden will: den
+Astro-Ordner (und/oder den Ordner mit AstroLogbuch.exe) in den
+Windows-Sicherheitseinstellungen unter "Viren- & Bedrohungsschutz" ->
+"Einstellungen verwalten" -> "Ausschluss hinzufuegen" von der
+Echtzeitueberpruefung ausnehmen. Das ist eine Sicherheitseinstellung, die
+du bewusst selbst vornehmen musst, das uebernimmt das Programm nicht
+automatisch.
+
+BROWSER-MODUS (Fallback, nur falls pywebview fehlt)
+-----------------------------------------------------
+
+Ist das Paket pywebview nicht installiert (oder das Erstellen des
+Programmfensters schlaegt aus einem anderen Grund fehl), erkennt das
+Programm das selbst und verhaelt sich dann wie die vorherige Version: Es
+oeffnet den Standardbrowser mit dem Dashboard ueber eine lokale Adresse
+(http://127.0.0.1:<Port>/), und ein Konsolenfenster muss dafuer offen
+bleiben, damit ein Klick auf eine Zeile den Ordner oeffnen kann. Im
+Browser-Modus laesst sich das Zahnrad-Menue nicht bedienen (es weist
+darauf hin) - Ordner und alle anderen Einstellungen muessen dann von Hand
+in AstroLogbuch_config.json eingetragen werden (siehe naechster
+Abschnitt). Fuer den normalen Gebrauch ist das nicht der empfohlene Weg,
+sondern nur ein Auffangnetz.
+
+KONFIGURATION ANPASSEN
+------------------------
+
+Die Einstellungen werden nicht im Skript selbst bearbeitet, sondern ueber
+das Zahnrad-Symbol im Programmfenster (siehe "Benutzung" oben) und
+dauerhaft in der Datei AstroLogbuch_config.json gespeichert, die neben der
+.exe bzw. neben astro_dashboard.py liegt.
+
+Die Datei ist normaler, lesbarer JSON-Text und laesst sich bei Bedarf auch
+direkt mit einem Texteditor bearbeiten (z. B. im Browser-Fallback-Modus,
+wo das Zahnrad-Menue nicht bedienbar ist, siehe oben). Sie enthaelt:
+
+- root_folder - Pfad zu deinem Astro-Ordner.
+- latitude - dein Breitengrad fuer die Sichtbarkeitsberechnung.
+- exclude_folder_names - Liste von Ordnernamen, die nicht als Projekte
+  gezaehlt werden sollen (z. B. ASIAIR, Testaufnahmen). Der Ordner
+  "AstroLogbuch" selbst (das Tool) ist unabhaengig davon immer
+  ausgeschlossen, egal was hier steht.
+- camera_map und filter_map - deine eigenen Kamera- bzw.
+  Filterbezeichnungen, siehe "Fuer andere Nutzer" weiter unten.
+- calib_words - Woerter, die einen Ordner als Kalibrierordner
+  (Flats/Darks/Bias) erkennen lassen.
+- show_thumbnails und online_lookup_enabled - je ein An/Aus-Schalter.
+
+Fehlt die Datei ganz (z. B. bei einer komplett neuen Installation ohne
+mitgelieferte Konfiguration), verwendet das Programm neutrale, nicht auf
+dich zugeschnittene Werkseinstellungen und fragt beim ersten Start nach
+einem Ordner.
+
+Nicht ueber die Einstellungen editierbar, weiterhin nur im Skript selbst
+(Abschnitt KONFIGURATION ganz oben in astro_dashboard.py, vor dem Bauen
+der EXE, siehe Anhang):
+
+- OBJECT_CATALOG - Objekte mit bekannten Koordinaten fuer Spezialfaelle
+  und deutsche Beinamen. Fuer neue Objekte musst du hier in aller Regel
+  aber nichts mehr eintragen, siehe "Woher die Koordinaten ... kommen"
+  weiter unten.
+- MERGE_INTO - alte, falsch einsortierte Ordner mit einem anderen Projekt
+  zusammenfuehren (Sonderfall, siehe "Doppelte / falsch einsortierte
+  Ordner zusammenfuehren" weiter unten).
+- Das Dateinamens-Schema der Light-Aufnahmen selbst (ASIAIR/NINA-Format,
+  siehe "Kamera-Auswertung" gleich im Anschluss) ist ebenfalls fest im
+  Skript hinterlegt, nicht ueber die Einstellungen anpassbar. Wer eine
+  ganz andere Aufnahmesoftware mit einem voellig anderen
+  Dateinamens-Aufbau nutzt, muesste dafuer das Skript anpassen lassen,
+  nicht nur Einstellungen aendern.
+
+FUER ANDERE NUTZER: EIGENE KAMERA- UND FILTERBEZEICHNUNGEN
+-------------------------------------------------------------
+
+Damit auch jemand mit anderen Kameras oder einer anderen Filterausstattung
+das Tool fuer die eigenen Daten nutzen kann, sind Kamera- und
+Filterbezeichnungen jetzt frei ueber die Einstellungen editierbar, statt
+im Skript fest hinterlegt zu sein:
+
+- Kamera-Bezeichnungen: Im Dateinamen steht die Kamera nur als Kurzcode,
+  zum Beispiel "2600". In den Einstellungen laesst sich dafuer eine
+  sprechende Bezeichnung hinterlegen (z. B. "2600" -> "ASI2600"). Ohne
+  Eintrag wird einfach der Kurzcode angezeigt, das Tool funktioniert also
+  auch ganz ohne diese Zuordnung, nur weniger sprechend beschriftet.
+- Filter-Bezeichnungen: Kuerzel aus dem Dateinamen (z. B. "H", "O", "S")
+  werden auf sprechende Namen abgebildet (z. B. "H" -> "Ha"). Die
+  Werkseinstellung deckt die bei ASIAIR/NINA ueblichen Kuerzel ab
+  (L/R/G/B/H/O/S/LP/CLS/Duo), laesst sich aber frei ergaenzen oder
+  ueberschreiben.
+- Ausgeschlossene Ordner und Kalibrier-Schluesselwoerter sind ebenfalls
+  frei anpassbar, falls jemand andere Ordnerbenennungen verwendet (z. B.
+  andere Woerter als "dark"/"flat"/"bias" fuer Kalibrieraufnahmen).
+
+Wichtig dabei, als Einschraenkung und nicht nur als Kleingedrucktes: Das
+grundsaetzliche Dateinamens-Schema der Light-Aufnahmen selbst (Ziel,
+Belichtungszeit, Kamera, Filter, Gain, Zeitstempel, laufende Nummer, in
+dieser Reihenfolge durch Unterstriche getrennt) ist weiterhin fest auf das
+Format von ASIAIR/NINA ausgelegt und nicht ueber die Einstellungen
+aenderbar. Nutzt jemand eine komplett andere Aufnahmesoftware mit einem
+grundlegend anderen Dateinamensaufbau (z. B. Voyager, Sequence Generator
+Pro, APT), wuerde das Tool dessen Light-Dateien nicht auswerten koennen,
+auch mit angepassten Kamera-/Filterbezeichnungen nicht. Das waere eine
+deutlich groessere Erweiterung (ein einstellbares Namensmuster statt eines
+fest einprogrammierten), die bewusst nicht Teil dieser Version ist.
+
+KAMERA-AUSWERTUNG
+-------------------
+
+Das Dashboard liest die Kamera aus dem Dateinamen-Feld direkt vor
+"gainXXX" und zeigt pro Projekt, welche Kamera(s) mit oder ohne Filter
+eingesetzt wurden. Zusaetzlich gibt es oben ein Feld "Kameranutzung
+gesamt", das ueber alle Projekte hinweg zusammenzaehlt, wie oft und wie
+lange jede Kamera im Einsatz war, inklusive Markierung der meistgenutzten.
+
+Das setzt voraus, dass die einzelnen Light-Dateien dem ASIAIR/NINA-Schema
+folgen (Light_<Ziel>_<Belichtung>s_Bin<n>_<Kamera>[_Filter]_gain<g>_
+<Zeitstempel>_<Nr>.fit). Nach dem Zeitstempel haengt die Software je nach
+Version/Einstellung noch weitere Felder an (z. B. einen
+Rotator-/Meridianwinkel wie "91deg" und/oder die Sensortemperatur wie
+"-0.1C") - das Skript ueberspringt eine beliebige Anzahl solcher
+zusaetzlicher Felder, bevor es die abschliessende Aufnahmenummer erwartet,
+und erkennt damit sowohl aeltere als auch neuere Namensvarianten. Passt
+ein Dateiname trotzdem nicht in dieses Schema (z. B. eine ganz andere
+Aufnahmesoftware oder eine manuell umbenannte Datei), bleibt fuer dieses
+Projekt "Kamera: -" und auch "Filter/Aufnahmen" zeigt dann hoechstens die
+Stundenangabe aus dem Ordnernamen, keine Kamera- oder Filterdetails - das
+ist kein Fehler, sondern eine Grenze dieser rein dateinamen-basierten
+Auswertung.
+
+Kamera-Rohcodes wie "2600" und "2600MC_RGB" werden anhand der Modellnummer
+automatisch zusammengefuehrt. Ob Mono oder Farbe/OSC dahintersteckt, wird
+pro Aufnahme einzeln ermittelt: Steht "MM" oder "MC" im Namen dieser
+Aufnahme, gilt das als sicher und ergibt eine eigene Zeile, "<Modell>
+(Mono)" bzw. "<Modell> (Farbe/OSC)". Kommen fuer dieselbe Modellnummer
+beide Varianten vor, erscheinen ganz bewusst zwei getrennte Zeilen, das
+bedeutet einfach zwei verschiedene Kamerakoerper desselben Modells (z. B.
+ein Wechsel von Mono auf Farbe/OSC zu einem beliebigen Zeitpunkt), kein
+Erkennungsproblem. Nur wenn eine Aufnahme selbst weder "MM" noch "MC" im
+Namen traegt, wird aus der tatsaechlichen Filternutzung geschaetzt (mit
+Filter -> wahrscheinlich Mono, ohne Filter -> wahrscheinlich Farbe/OSC)
+und das Ergebnis als eigene Zeile mit dem Zusatz "vermutlich" ausgewiesen,
+statt es mit den sicheren Werten zu vermischen.
+
+WOHER DIE KOORDINATEN FUER DAS OPTIMALE FENSTER KOMMEN
+----------------------------------------------------------
+
+Damit auch fuer neue, bisher unbekannte Projekte automatisch ein optimales
+Beobachtungsfenster berechnet werden kann (nicht nur fuer Objekte, die von
+Hand in OBJECT_CATALOG eingetragen wurden), ermittelt das Programm die
+Koordinaten eines Objekts in drei aufeinanderfolgenden Schritten:
+
+1. OBJECT_CATALOG - der von Hand gepflegte Katalog fuer Spezialfaelle und
+   deutsche Beinamen (siehe oben).
+2. Eingebauter Katalog - im Programm ist zusaetzlich ein grosser Katalog
+   mit rund 14 000 Eintraegen eingebettet, abgeleitet aus OpenNGC
+   (https://github.com/mattiaverga/OpenNGC, Autor Mattia Verga, Lizenz
+   CC-BY-SA-4.0), das seinerseits Daten aus NED, HyperLeda, SIMBAD und
+   HEASARC zusammenfuehrt. Das deckt praktisch alle NGC- und IC-Objekte,
+   Messier-Nummern sowie einige Sharpless(Sh2)- und LBN-Bezeichnungen ab,
+   sofern die entsprechende Katalognummer im Ordnernamen steht (z. B.
+   "NGC 7000", "IC1318", "M 31", "Sh2-155"). Dieser Schritt braucht kein
+   Internet und laeuft komplett lokal.
+3. Online-Namensaufloesung - enthaelt der Ordnername keine erkennbare
+   Katalognummer aus Schritt 2 (z. B. eine reine LDN-Bezeichnung oder ein
+   rein informeller Name), fragt das Programm einmalig bei Sesame
+   (https://cds.unistra.fr/) an, einem seit Jahrzehnten etablierten
+   oeffentlichen Namensaufloesungsdienst des CDS Strasbourg. Das Ergebnis
+   wird danach dauerhaft in AstroLogbuch_object_cache.json (im selben
+   Ordner wie die EXE) gespeichert, sodass fuer dasselbe Objekt in
+   kuenftigen Laeufen keine erneute Internetabfrage mehr noetig ist. Auch
+   ein Ergebnis "Objekt nicht gefunden" wird gespeichert, damit nicht bei
+   jedem Start erneut vergeblich nachgefragt wird. Ist kein Internet
+   verfuegbar, wird das im Konsolenfenster vermerkt, betroffene Projekte
+   bleiben dann einfach ohne Fenster, es gibt keine Fehlermeldung oder
+   einen Absturz. Ueber ONLINE_LOOKUP_ENABLED = False laesst sich dieser
+   Schritt vollstaendig abschalten.
+
+Kometen sind eine strukturelle Ausnahme. Ein optimales
+Beobachtungsfenster setzt eine feste Himmelsposition voraus. Kometen
+bewegen sich aber laufend relativ zu den Sternen, eine "feste" Position
+waere also fachlich falsch bzw. irrefuehrend. Projekte, die als Kategorie
+"Komet" erkannt werden, bekommen deshalb bewusst nie ein Fenster
+angezeigt, unabhaengig davon, ob der Name online aufloesbar waere. Das ist
+eine dauerhafte, technisch begruendete Einschraenkung, kein Fehler und
+auch nichts, was sich mit einem groesseren Katalog beheben liesse.
+
+Wie bisher gilt: Ein Projekt, dessen Name in keinem der drei Schritte
+aufgeloest werden kann (und das kein Komet ist), bekommt einfach kein
+Fenster angezeigt, das ist kein Fehler.
+
+ORDNER OEFFNEN
+----------------
+
+Ein Klick auf eine Zeile oeffnet den zugehoerigen Ordner direkt im
+Windows-Explorer (unten erscheint kurz eine Bestaetigung). Eine Webseite
+allein koennte das aus Sicherheitsgruenden nicht (ein reiner Link wuerde
+nur eine Dateiliste im Browser selbst zeigen); das Dashboard fragt dafuer
+stattdessen beim noch laufenden Programm nach, das den Ordner dann mit den
+Windows-Bordmitteln oeffnet. Deshalb muss das Programm dafuer noch laufen
+(siehe "Benutzung" oben).
+
+Ist das Programm nicht mehr aktiv, zum Beispiel weil du die Datei
+AstroLogbuch.html zu einem spaeteren Zeitpunkt einfach per Doppelklick
+erneut geoeffnet hast, kopiert ein Klick ersatzweise nur den Ordnerpfad in
+die Zwischenablage. Zum Oeffnen dann: Windows-Taste+E fuer einen neuen
+Explorer, Strg+V in die Adresszeile, Enter.
+
+Die lokale Adresse ist ausschliesslich auf deinem eigenen Rechner
+erreichbar (127.0.0.1, kein Netzwerkzugriff von aussen), daher sollte
+dafuer auch keine Windows-Firewall-Meldung erscheinen. Falls doch:
+unbedenklich zulassen, es verlaesst den eigenen Rechner nicht.
+
+BILDVORSCHAU
+--------------
+
+Fuer Projekte mit einer fertigen Datei (jpg/png/tif) wird automatisch ein
+Vorschaubild direkt aus dieser Datei erzeugt und in der ersten Spalte
+angezeigt, in fester quadratischer Groesse (mittiger Ausschnitt statt
+Verzerrung), damit die Liste einheitlich aussieht.
+
+Fuer unfertige Projekte ohne fertige Datei gibt es bewusst kein Bild, ein
+Rohbild (Light-Frame) sagt vor der Bearbeitung kaum etwas aus.
+
+Bei der Auswahl unter mehreren fertigen Dateien gilt: Dateien mit Namen
+wie "...annotated..." oder "...solved..." (Koordinaten-/Plate-Solve-
+Overlays aus PixInsight & Co., ebenso wie Screenshots) werden
+uebersprungen, jpg/png werden gegenueber tif/tiff bevorzugt (ein
+separates TIF kann auch ein unbearbeiteter linearer Master sein), und
+innerhalb dessen die groesste Datei gewaehlt.
+
+Falls ein gewaehltes Bild ein 16-Bit- oder Float-TIFF ohne fertige
+Farbkorrektur ist (z. B. ein linearer Master direkt aus dem Stacking,
+noch vor der eigentlichen Bildbearbeitung), wuerde eine naive Umwandlung
+nach RGB es komplett weiss erscheinen lassen, weil Pillow Werte oberhalb
+von 255 abschneidet statt zu skalieren. Das Skript streckt solche Bilder
+daher zuerst anhand des tatsaechlichen Wertebereichs, bevor daraus die
+Vorschau erzeugt wird.
+
+DATENMENGE JE STATUS
+-----------------------
+
+Unter den Kacheln oben (Projekte gesamt, Fertig, In Arbeit, Geplant,
+Status unklar) steht jeweils zusaetzlich die Datenmenge, die die Projekte
+dieses Status tatsaechlich auf der Platte belegen (in KB/MB/GB/TB, je
+nachdem was passt). Kalibrieraufnahmen (Flats/Darks/Bias) zaehlen hier
+mit, falls vorhanden: Sie werden zwar fuer die eigentliche Auswertung
+(Filter, Kamera, Belichtungszeit) uebersprungen, ihr Speicherplatz wird
+aber trotzdem mitgezaehlt, weil er echten Platz auf der Platte belegt.
+
+Achtung bei Geplant: Diese Kachel zeigt an, wie viele Projekte nur einen
+Monatshinweis im Namen tragen, aber (noch) kein fuer das Dashboard
+auswertbares Ergebnis liefern - das bedeutet nicht zwingend, dass der
+Ordner leer ist.
+
+DOPPELTE / FALSCH EINSORTIERTE ORDNER ZUSAMMENFUEHREN
+---------------------------------------------------------
+
+Wenn wie bei "200313_M101" und "200314_M101" mehrere Ordner eigentlich zum
+selben Projekt gehoeren, tauchen sie normalerweise als eigene Zeilen auf,
+weil das Skript jeden Top-Level-Ordner fuer sich behandelt. Ueber
+MERGE_INTO im Konfigurationsabschnitt kannst du das gezielt korrigieren:
+
+    MERGE_INTO = {
+        "200313_M101": "M101 - Feuerrad-Galaxie",
+        "200314_M101": "M101 - Feuerrad-Galaxie",
+    }
+
+Die Kennzahlen der Quellordner werden dann in die Zielzeile eingerechnet,
+die Quellen selbst verschwinden aus der Liste, und unter dem Zielnamen
+erscheint ein kleiner Hinweis, mit welchen Ordnern zusammengefuehrt
+wurde. Das Skript raet hier bewusst nichts automatisch, du musst die
+Zuordnung einmalig selbst eintragen.
+
+WIE DER STATUS ERMITTELT WIRD (feste Regeln, keine KI-Einschaetzung)
+--------------------------------------------------------------------
+
+1. "done" oder "fertig" im Ordnernamen -> Fertig
+2. sonst fertige Bilddatei (jpg/png/tif/psd/mp4) im Ordner oder in einem
+   Stack-Unterordner -> In Arbeit
+3. sonst ein Monatsname im Ordnernamen (z. B. "August") -> Geplant
+4. sonst nur Rohaufnahmen ohne Stack-Ordner -> Nur Rohdaten
+5. sonst ein Stack-Ordner vorhanden, aber kein Endbild -> Unklar
+6. sonst (fast keine Dateien) -> Kaum begonnen
+
+Fertig wird ausschliesslich ueber das "done"- bzw. "fertig"-Tag im
+Ordnernamen vergeben, nie automatisch aus einer vorhandenen Bilddatei
+geschlossen. Eine fertige Datei ohne dieses Tag zaehlt als In Arbeit, du
+markierst ein Projekt also selbst als fertig, indem du "done"/"Done" ODER
+"fertig"/"Fertig" (beide gleichwertig, ganz nach eigener Vorliebe) an den
+Ordnernamen anhaengst - mit Bindestrich, Leerzeichen oder Unterstrich
+davor, also z. B. "M31 - Done", "M31-Fertig" oder "M31_Done" gleichermassen
+gueltig.
+
+Geplant heisst nur "kein auswertbares Ergebnis gefunden", nicht "Ordner
+ist leer" - ein Projekt kann trotzdem schon Kalibrieraufnahmen oder
+andere Dateien enthalten, die das Skript nur nicht als Fortschritt
+zaehlt.
+
+BEKANNTE EINSCHRAENKUNGEN
+----------------------------
+
+- Stunden: Nur wenn im Unterordnernamen eine Zahl mit "h" steht (z. B.
+  "..._8.3h") oder die Dateinamen dem ASIAIR/NINA-Schema folgen, wird
+  eine Gesamtzeit berechnet. Bei alten DSLR-Aufnahmen ohne Belichtungszeit
+  im Namen bleibt das Feld leer, es wird nichts geschaetzt.
+- Kategorie (Galaxie, Nebel, ...): grobe Zuordnung ueber Schluesselwoerter
+  im Namen.
+- Beobachtungsfenster: wird ueber drei Stufen ermittelt, siehe "Woher die
+  Koordinaten fuer das optimale Fenster kommen" oben. Bleibt der Name in
+  allen drei Stufen unerkannt, gibt es kein Fenster, das ist kein Fehler.
+- Kometen bekommen bewusst nie ein Beobachtungsfenster, weil sich ihre
+  Position laufend aendert. Planeten werden dagegen wie normale
+  Deep-Sky-Objekte behandelt.
+- Kamera: MM- oder MC-Variante (mono/Farbe) desselben Modells laesst sich
+  aus dem Dateinamen allein nicht unterscheiden, nur der Kurzcode (z. B.
+  "2600") ist eindeutig auslesbar. Ob mit oder ohne Filter aufgenommen
+  wurde, wird aber korrekt erkannt.
+
+GESCHWINDIGKEIT
+------------------
+
+Kalibrierordner (alles mit "flat", "dark", "bias", "offset", "dunkel" oder
+"darkflat" im Ordnernamen) werden fuer die eigentliche Auswertung (Filter,
+Kamera, Belichtungszeit) komplett uebersprungen, statt jede einzelne
+Datei darin einzulesen und dann zu verwerfen; ihre Dateigroesse wird
+trotzdem noch schnell aufsummiert, damit sie in der Datenmenge auftaucht.
+Ebenso wird fuer die Bildvorschau nicht mehr jede Kandidatendatei einzeln
+geoeffnet und dekodiert, sondern anhand der Dateigroesse auf der
+Festplatte vorsortiert; nur die am Ende gewaehlte Datei wird tatsaechlich
+geoeffnet.
+
+Vorschaubilder werden zwischengespeichert. Deshalb legt das Programm
+neben sich eine Datei AstroLogbuch_thumb_cache.json an und merkt sich
+darin fuer jede verwendete Vorschaudatei Aenderungszeit, Groesse und das
+fertige Vorschaubild. Beim naechsten Lauf wird ein Vorschaubild nur dann
+neu erzeugt, wenn sich die Quelldatei seither geaendert hat oder neu
+hinzugekommen ist. Diese Cache-Datei kannst du jederzeit gefahrlos
+loeschen, dann werden beim naechsten Lauf einfach wieder alle
+Vorschaubilder neu erzeugt (nur etwas langsamer, kein Datenverlust).
+
+Objekt-Koordinaten werden ebenso zwischengespeichert. Analog dazu legt
+das Programm die Datei AstroLogbuch_object_cache.json an und merkt sich
+darin jedes online nachgeschlagene Objekt dauerhaft (auch ein Ergebnis
+"nicht gefunden"). Auch diese Datei kannst du jederzeit gefahrlos loeschen
+(dann werden unbekannte Objekte beim naechsten Lauf erneut online
+nachgeschlagen) oder das Nachschlagen ueber ONLINE_LOOKUP_ENABLED = False
+ganz abschalten.
+
+FUER ANDERE NUTZER: WAS WEITERGEBEN
+--------------------------------------
+
+Wer AstroLogbuch an jemand anderen weitergeben moechte, braucht dafuer
+nur eine einzige Datei:
+
+- AstroLogbuch.exe - laeuft eigenstaendig, ohne Installation, ohne
+  Python, und zeigt auch ohne begleitende AstroLogbuch.ico-Datei das
+  richtige Fenster-/Taskleisten-Icon (das ist bereits in der EXE selbst
+  eingebettet).
+
+Nicht mitgeben, da persoenlich bzw. automatisch neu erzeugt:
+- AstroLogbuch_config.json (deine eigenen Einstellungen: Ordnerpfad,
+  Standort, Kamera-/Filterzuordnungen),
+- AstroLogbuch_thumb_cache.json und AstroLogbuch_object_cache.json (deine
+  eigene Zwischenspeicherung, fuer einen anderen Nutzer irrelevant).
+
+Der andere Nutzer legt die Exe einfach in einen eigenen, leeren Ordner und
+startet sie - beim ersten Mal fragt sie ganz normal nach dessen eigenem
+Astro-Ordner.
+
+ANHANG: EIGENEN BUILD AUS DEM QUELLCODE ERSTELLEN
+======================================================
+
+Nur relevant, falls du astro_dashboard.py selbst anpassen und danach neu
+eine EXE daraus bauen moechtest. Fuer die reine Nutzung (siehe Abschnitte
+oben) ist dieser Anhang nicht noetig.
+
+1. Python installieren (einmalig)
+------------------------------------
+
+1. https://www.python.org/downloads/ oeffnen, aktuelle Version fuer
+   Windows laden.
+2. Beim Installieren unbedingt das Kaestchen "Add python.exe to PATH"
+   anhaken.
+3. Installation abschliessen.
+
+2. Aus dem Skript eine EXE machen (nach jeder eigenen Aenderung erneut)
+---------------------------------------------------------------------------
+
+1. astro_dashboard.py in einen Ordner deiner Wahl legen (z. B. direkt in
+   F:\Fotos\Astro\AstroLogbuch, wie bisher).
+2. In diesem Ordner mit Shift+Rechtsklick auf freier Flaeche
+   "PowerShell-Fenster hier oeffnen" waehlen (oder cmd oeffnen und mit cd
+   dorthin wechseln).
+3. Folgendes eingeben und mit Enter bestaetigen:
+
+       pip install pyinstaller pillow pywebview
+
+   - pillow ist optional, aber noetig fuer die Bildvorschau.
+   - pywebview sorgt fuer das eigene Programmfenster ohne Browser. Fehlt
+     es, laeuft das Programm trotzdem, dann aber im alten Browser-Modus.
+     Unter Windows installiert pip dabei automatisch noch pythonnet mit,
+     das braucht pywebview intern, das ist normal.
+4. Danach (die Datei AstroLogbuch.ico liegt bereits mit im Ordner und wird
+   fuer das Programm-/Fenster-Icon gebraucht; --noconsole unterdrueckt das
+   separate schwarze Konsolenfenster, siehe Hinweis dazu weiter oben bei
+   "Falls es einmal hakt"):
+
+       pyinstaller --onefile --noconsole --icon=AstroLogbuch.ico --name AstroLogbuch astro_dashboard.py
+
+5. Das dauert eine Weile. Am Ende liegt im neu entstandenen Unterordner
+   "dist" die Datei AstroLogbuch.exe. Falls die EXE startet, aber keine
+   Bildvorschauen zeigt und auch keine Fehlermeldung dazu bringt, probier
+   stattdessen:
+
+       pyinstaller --onefile --noconsole --icon=AstroLogbuch.ico --collect-all pillow --collect-all webview --name AstroLogbuch astro_dashboard.py
+
+   Das bindet Pillow und pywebview vollstaendiger mit ein (pywebview
+   bringt zwar einen eigenen PyInstaller-Baustein mit, der das
+   normalerweise automatisch regelt, aber --collect-all ist der
+   zuverlaessigste Weg, falls doch mal ein Teil fehlt).
+6. Diese AstroLogbuch.exe an einen beliebigen Ort verschieben oder
+   kopieren, z. B. nach F:\Fotos\Astro\AstroLogbuch, wie bisher. Die
+   Ordner "build" und die Datei "AstroLogbuch.spec", die daneben
+   entstanden sind, kannst du loeschen, die werden nicht mehr gebraucht.
+   Fuer den eigenen Testlauf bzw. die Weitergabe an andere reicht danach
+   die AstroLogbuch.exe allein (siehe "Fuer andere Nutzer: Was
+   weitergeben" oben) - AstroLogbuch.ico wird nur fuer diesen Build-Schritt
+   selbst gebraucht.

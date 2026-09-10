@@ -1,0 +1,49 @@
+ASTROLOGBUCH - HINWEISE FUER MAC/LINUX
+=========================================
+
+Fuer Mac und Linux gibt es keine fertige App/Binary, sondern nur das
+Python-Skript astro_dashboard.py. Es reicht diese eine Datei - Python
+startet es direkt, es muss dafuer nichts gebaut/kompiliert werden.
+
+VORAUSSETZUNGEN
+------------------
+
+- Python 3 (auf aktuellen Macs meist schon vorhanden; unter Linux ueber
+  die Paketverwaltung, z. B. "sudo apt install python3 python3-pip")
+- Zusaetzlich einmalig per Terminal installieren:
+
+    macOS:
+        pip3 install pywebview pillow
+
+    Linux (Debian/Ubuntu, GTK-Backend):
+        sudo apt install python3-gi gir1.2-webkit2-4.1
+        pip3 install pywebview pillow
+
+    (Andere Linux-Distributionen: der Paketname fuer WebKit2GTK kann
+    leicht abweichen, z. B. gir1.2-webkit2-4.0 auf aelteren Systemen.)
+
+STARTEN
+---------
+
+Im Terminal in den Ordner mit astro_dashboard.py wechseln und:
+
+    python3 astro_dashboard.py
+
+Beim allerersten Start fragt das Programm per Dialog nach deinem
+Astro-Hauptordner. Alle Einstellungen (Ordner, Standort, Kamera-/
+Filterbezeichnungen) lassen sich danach jederzeit ueber das
+Zahnrad-Symbol im Programmfenster aendern und werden automatisch in einer
+Datei AstroLogbuch_config.json im selben Ordner gespeichert.
+
+Fehlt pywebview oder laesst sich aus einem anderen Grund kein
+Programmfenster erstellen, oeffnet sich stattdessen automatisch der
+Standardbrowser mit demselben Dashboard (Fallback, keine Fehlermeldung).
+
+WEITERE DETAILS
+------------------
+
+Alles Weitere (Ordnernamen fuer die automatische Erkennung, Bedeutung der
+Status-Kacheln, Kamera-/Filterauswertung, bekannte Einschraenkungen usw.)
+ist unabhaengig vom Betriebssystem und in ANLEITUNG.txt beschrieben -
+nur den Abschnitt zum Bauen einer Windows-EXE (Anhang ganz am Ende)
+braucht ihr nicht.
