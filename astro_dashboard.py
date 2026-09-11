@@ -132,6 +132,12 @@ DEFAULT_CONFIG = {
     "calib_words": ["dark", "flat", "bias", "offset", "dunkel", "darkflat"],
     "show_thumbnails": True,
     "online_lookup_enabled": True,
+    # Manuelle Vorschaubild-Wahl je Projekt (Klick auf das Vorschaubild in der
+    # Tabelle). Schluessel = Projektordnerpfad. Wert = relativer Dateipfad
+    # (manuell gewaehltes Bild) oder null (explizit "kein Bild"). Fehlt der
+    # Schluessel fuer ein Projekt, gilt weiterhin die automatische Heuristik
+    # (pick_preview_file()) - das ist der Normalfall fuer die meisten Projekte.
+    "preview_overrides": {},
 }
 
 # "astrologbuch" (der Ordner dieses Tools selbst) ist immer ausgeschlossen,
@@ -142,7 +148,7 @@ ALWAYS_EXCLUDED_FOLDER_NAMES = {"astrologbuch"}
 # Bei jeder inhaltlichen Aenderung erhoehen und einen Eintrag in
 # CHANGELOG.txt ergaenzen (siehe dort). Wird im Dashboard (Kopfzeile
 # rechts) angezeigt, damit erkennbar ist, welcher Stand gerade laeuft.
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.0"
 
 CONFIG_FILENAME = "AstroLogbuch_config.json"
 ICON_FILENAME = "AstroLogbuch.ico"  # neben Skript/EXE, siehe Schritt 2 in ANLEITUNG.txt
@@ -154,6 +160,7 @@ ROOT_FOLDER = ""
 LATITUDE = DEFAULT_CONFIG["latitude"]
 EXCLUDE_FOLDER_NAMES = set(DEFAULT_CONFIG["exclude_folder_names"]) | ALWAYS_EXCLUDED_FOLDER_NAMES
 SHOW_THUMBNAILS = DEFAULT_CONFIG["show_thumbnails"]
+PREVIEW_OVERRIDES = dict(DEFAULT_CONFIG["preview_overrides"])
 
 # Optional: Ordner, die eigentlich zu einem anderen Projekt gehoeren
 # (z. B. alte, falsch einsortierte Zwischenordner), zusammenfuehren.
@@ -175,6 +182,16 @@ THUMBNAIL_MAX_PX = 160
 # Online-Namensaufloesung; hier beobachtet als "Programm haengt sich beim
 # Start auf", Fenstertitel "Keine Rueckmeldung", waehrend Phase 2 lief).
 THUMBNAIL_TIMEOUT_SECONDS = 5
+
+# Fuers Vorschaubild-Auswahlfenster (list_preview_candidates): Dateien
+# oberhalb dieser Groesse bekommen dort bewusst KEINE Live-Vorschau erzeugt,
+# sondern nur einen Platzhalter (Name bleibt trotzdem waehlbar). Grund:
+# unbearbeitete lineare Master-TIFFs direkt aus dem Stacking koennen
+# mehrere hundert MB gross sein - deren Dekodierung fuer eine reine
+# Auswahl-Miniatur wuerde das Oeffnen des Fensters spuerbar verzoegern,
+# obwohl die automatische Heuristik (pick_preview_file) so eine Datei wegen
+# der Endungs-Prioritaet ohnehin nie waehlen wuerde.
+PREVIEW_PICKER_MAX_THUMB_BYTES = 15 * 1024 * 1024
 
 # Fuer das "optimale Fenster" wird zuerst der eingebaute Katalog probiert
 # (OBJECT_CATALOG unten, dann der grosse NGC/IC/Messier-Katalog, siehe
@@ -223,7 +240,7 @@ def apply_config(cfg):
     verwendeten Variablen. Wird beim Start und nach jedem Speichern der
     Einstellungen im Programmfenster aufgerufen."""
     global ROOT_FOLDER, LATITUDE, EXCLUDE_FOLDER_NAMES, CAMERA_MAP, \
-        FILTER_MAP, CALIB_WORDS, SHOW_THUMBNAILS, ONLINE_LOOKUP_ENABLED
+        FILTER_MAP, CALIB_WORDS, SHOW_THUMBNAILS, ONLINE_LOOKUP_ENABLED, PREVIEW_OVERRIDES
     ROOT_FOLDER = str(cfg.get("root_folder") or "")
     try:
         LATITUDE = float(cfg.get("latitude", DEFAULT_CONFIG["latitude"]))
@@ -238,6 +255,8 @@ def apply_config(cfg):
     CALIB_WORDS = tuple(str(w).strip().lower() for w in calib if str(w).strip())
     SHOW_THUMBNAILS = bool(cfg.get("show_thumbnails", True))
     ONLINE_LOOKUP_ENABLED = bool(cfg.get("online_lookup_enabled", True))
+    overrides = cfg.get("preview_overrides", {})
+    PREVIEW_OVERRIDES = dict(overrides) if isinstance(overrides, dict) else {}
 
 
 # Objekt-Katalog: Namensfragment (klein geschrieben, ohne Sonderzeichen-Sorgen)
@@ -14128,17 +14147,28 @@ def save_thumb_cache(cache_path, cache):
         pass  # der Zwischenspeicher ist nur eine Optimierung, kein Muss
 
 
-def get_thumbnail_cached(preview_path, size, mtime, old_cache, used_cache, stats):
+def get_thumbnail_cached(preview_path, size, mtime, old_cache, used_cache, stats, max_bytes=None):
     """size/mtime kommen von pick_preview_file() (letztlich aus dem
     urspruenglichen Verzeichnis-Listing in scan_project(), siehe dort) -
     bewusst kein eigener os.stat()-Aufruf mehr hier, das war vorher eine
-    beobachtete Haenger-Quelle (siehe _scandir_walk-Kommentar)."""
+    beobachtete Haenger-Quelle (siehe _scandir_walk-Kommentar).
+
+    max_bytes (nur vom Vorschaubild-Auswahlfenster genutzt, siehe
+    list_preview_candidates): ist die Datei bereits gecacht, wird das
+    Ergebnis immer verwendet, unabhaengig von der Groesse. Nur fuer eine
+    NEUE Generierung wird oberhalb dieser Grenze bewusst kein Thumbnail
+    erzeugt (z. B. ein 400-MB-Linear-Master wuerde das Oeffnen des
+    Auswahlfensters spuerbar verzoegern) - der Datei-Eintrag bleibt trotzdem
+    per Namen waehlbar, nur ohne Live-Vorschau."""
     key = os.path.normcase(os.path.abspath(preview_path))
     old = old_cache.get(key)
     if old and old.get("mtime") == mtime and old.get("size") == size:
         used_cache[key] = old
         stats["hits"] += 1
         return old.get("thumb")
+    if max_bytes is not None and size > max_bytes:
+        stats["skipped_large"] = stats.get("skipped_large", 0) + 1
+        return None
     try:
         thumb = make_thumbnail_with_hard_timeout(preview_path)
     except _ThumbnailTimeout:
@@ -14233,8 +14263,28 @@ def build_entry_from_scan(name, scan, project_path, ref_year, resolve_camera, me
     obs = compute_obs(coords[0], coords[1], ref_year) if coords else None
 
     thumb = None
-    if HAVE_PIL and SHOW_THUMBNAILS and scan["final_files"]:
-        picked = pick_preview_file(project_path, scan["final_files"])
+    if HAVE_PIL and SHOW_THUMBNAILS:
+        # Manuelle Wahl (Klick auf das Vorschaubild, siehe Api.set_preview_override)
+        # geht der automatischen Heuristik vor. Kein Eintrag fuer dieses Projekt
+        # -> ganz normal die Heuristik (Normalfall). Eintrag None -> Nutzer hat
+        # explizit "kein Bild" gewaehlt. Eintrag als Pfad -> genau diese Datei
+        # verwenden, sofern sie noch existiert; ist sie verschwunden (geloescht/
+        # umbenannt), faellt es automatisch auf die Heuristik zurueck statt
+        # einfach kein Bild mehr zu zeigen.
+        picked = None
+        if project_path in PREVIEW_OVERRIDES:
+            override_rel = PREVIEW_OVERRIDES[project_path]
+            if override_rel is None:
+                picked = None
+            else:
+                for rel, size, mtime in scan["final_files"]:
+                    if rel == override_rel:
+                        picked = (os.path.join(project_path, rel), size, mtime)
+                        break
+                if picked is None and scan["final_files"]:
+                    picked = pick_preview_file(project_path, scan["final_files"])
+        elif scan["final_files"]:
+            picked = pick_preview_file(project_path, scan["final_files"])
         if picked:
             preview_path, preview_size, preview_mtime = picked
             if thumb_cache_old is not None and thumb_cache_used is not None:
@@ -14544,11 +14594,24 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .settings-status.ok{ color:var(--good); }
   .settings-fallback-note{ background:var(--warn-soft); border:1px solid var(--warn); color:var(--warn); border-radius:8px; padding:10px 12px; font-size:12.5px; margin-bottom:16px; }
 
-  table{ width:100%; border-collapse:collapse; }
-  thead th{ position:sticky; top:0; background:var(--surface-2); text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-faint); font-weight:600; padding:8px 12px; border-bottom:1px solid var(--border); cursor:pointer; white-space:nowrap; }
+  /* table-layout:fixed statt des Standards "auto": Bei "auto" verteilt der
+     Browser bei width:100% ungenutzten Platz nach eigenen Regeln auf die
+     Spalten - schmale Spalten (Status, Nächte, ...) konnten dadurch viel
+     breiter werden als ihr Inhalt braucht (sichtbar als grosse Luecke
+     zwischen Wert und naechster Spalte), waehrend textreiche Spalten
+     (Filter/Aufnahmen, Kamera, Optimales Fenster) trotz eines zusaetzlichen
+     max-width auf ihrem Inhalt unnoetig frueh umbrechen mussten. Mit
+     "fixed" bestimmt stattdessen die <colgroup> unten die tatsaechliche
+     Breite jeder Spalte, fest zugeschnitten auf ihren jeweiligen Inhalt. */
+  table{ width:100%; border-collapse:collapse; table-layout:fixed; }
+  /* Bewusst KEIN white-space:nowrap mehr hier: Das passte bei der
+     ehemaligen Spaltenbreite "nach Inhalt" (table-layout:auto), bei den
+     jetzt festen, teils schmaleren Spalten (siehe colgroup) wuerde eine
+     lange Beschriftung wie "Letzte Bearbeitung" sonst einfach abgeschnitten
+     statt in eine zweite Zeile umzubrechen. */
+  thead th{ position:sticky; top:0; background:var(--surface-2); text-align:center; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-faint); font-weight:600; padding:8px 12px; border-bottom:1px solid var(--border); cursor:pointer; }
   thead th:hover{ color:var(--text); }
-  thead th.num-col{ text-align:right; }
-  tbody td{ padding:7px 9px; border-bottom:1px solid var(--border-soft); vertical-align:top; }
+  tbody td{ padding:7px 9px; border-bottom:1px solid var(--border-soft); vertical-align:top; text-align:center; }
   tbody tr:hover{ background:var(--surface-2); }
   tbody tr:last-child td{ border-bottom:none; }
   /* Bewusst KEIN overflow (weder x noch y) mehr auf .tablewrap: Jede
@@ -14563,7 +14626,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
      einziger Satz Scrollbalken, und der "klebende" Tabellenkopf
      (thead th{position:sticky}) haengt sich dadurch korrekt an die Seite
      selbst statt an einen inneren Container. */
-  td.num-col, th.num-col{ text-align:right; font-family:'IBM Plex Mono',monospace; }
+  /* Kopf UND Wert bewusst gleich ausgerichtet (mittig): bei
+     table-layout:auto verteilt der Browser bei width:100% ungenutzten Platz
+     auf die Spalten, eine schmale Spalte (z. B. "Nächte") kann dadurch
+     deutlich breiter werden, als ihr Inhalt braucht. Waeren Kopf und Wert
+     unterschiedlich ausgerichtet (z. B. Kopf mittig, Wert rechtsbuendig),
+     wuerden sie in so einer breiten Spalte sichtbar auseinanderklaffen,
+     obwohl beide im selben Spaltenbereich liegen. Mittig fuer beide
+     schliesst diese Luecke unabhaengig von der tatsaechlichen Spaltenbreite. */
+  td.num-col, th.num-col{ text-align:center; font-family:'IBM Plex Mono',monospace; }
+  /* Kurze badge-artige Werte (Typ-Kuerzel, Status-Pille) ebenfalls mittig,
+     aus demselben Grund wie bei num-col oben - nur ohne die Monospace-
+     Schrift, die dort speziell fuer Zahlen/Daten gedacht ist. */
+  td.ctr-col, th.ctr-col{ text-align:center; }
   .obj{ font-weight:600; }
   .obj-link{ font-weight:600; color:var(--text); }
   tbody tr.row-link{ cursor:pointer; }
@@ -14571,7 +14646,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .copy-toast{ position:fixed; left:50%; bottom:28px; transform:translateX(-50%) translateY(8px); background:var(--text); color:var(--bg); padding:9px 16px; border-radius:8px; font-size:12.5px; font-family:'IBM Plex Mono',monospace; opacity:0; pointer-events:none; transition:opacity .15s ease, transform .15s ease; box-shadow:var(--shadow); z-index:50; max-width:min(90vw,70ch); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .copy-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
   .obj-sub{ display:block; font-size:12px; color:var(--text-faint); font-weight:400; margin-top:1px; }
-  .cat{ display:inline-block; font-size:11px; padding:2px 7px; border-radius:5px; background:var(--surface-3); color:var(--text-dim); font-family:'IBM Plex Mono',monospace; }
+  /* border-radius:999px statt eines kleinen festen Wertes: die Typ-Spalte
+     ist schmal genug, dass laengere Kategorien (z. B. "Nebel/Deep-Sky")
+     zweizeilig umbrechen - bei einer festen kleinen Rundung wirkt eine so
+     hoehere Box schnell eckig statt wie die Pillenform bei Status. 999px
+     ergibt unabhaengig von der Hoehe (ein- oder zweizeilig) immer eine
+     durchgehend abgerundete Kapselform, genau wie .pill. */
+  .cat{ display:inline-block; font-size:11px; padding:2px 7px; border-radius:999px; background:var(--surface-3); color:var(--text-dim); font-family:'IBM Plex Mono',monospace; }
   .pill{ display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:600; padding:3px 9px; border-radius:999px; white-space:nowrap; }
   .pill .dot{ width:6px; height:6px; border-radius:50%; }
   .pill.done{ background:var(--good-soft); color:var(--good); } .pill.done .dot{ background:var(--good); }
@@ -14579,8 +14660,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .pill.unclear{ background:var(--bad-soft); color:var(--bad); } .pill.unclear .dot{ background:var(--bad); }
   .pill.neutral{ background:var(--neutral-soft); color:var(--neutral); } .pill.neutral .dot{ background:var(--neutral); }
   .none{ color:var(--text-faint); }
-  .filters-txt{ font-size:12px; color:var(--text-dim); max-width:165px; white-space:normal; overflow-wrap:break-word; }
-  .obs-cell{ font-size:12px; color:var(--text-dim); display:inline-block; max-width:150px; white-space:normal; }
+  /* Kein max-width mehr hier: die Spaltenbreite kommt jetzt fest aus der
+     <colgroup> (table-layout:fixed), ein zusaetzlicher Cap hier wuerde nur
+     wieder unnoetig frueh umbrechen, egal wie viel Platz die Spalte
+     tatsaechlich hat. */
+  .filters-txt{ font-size:12px; color:var(--text-dim); white-space:normal; overflow-wrap:break-word; }
+  .obs-cell{ font-size:12px; color:var(--text-dim); white-space:normal; overflow-wrap:break-word; }
   .obs-cell .peak{ color:var(--text); font-weight:600; }
   .obs-badge{ display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--good); margin-right:5px; }
   .obs-na{ font-size:12px; color:var(--text-faint); font-style:italic; }
@@ -14596,6 +14681,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .thumb{ display:block; width:88px; height:88px; border-radius:6px; object-fit:cover; border:1px solid var(--border-soft); }
   .thumb-ph{ display:flex; width:88px; height:88px; border-radius:6px; background:var(--surface-3); align-items:center; justify-content:center; color:var(--text-faint); font-size:19px; }
   th.img-col, td.img-col{ width:100px; padding-right:4px; padding-left:14px; vertical-align:middle; }
+  td.img-col{ cursor:pointer; }
+  .preview-picker-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px;
+    max-height:60vh; overflow-y:auto; margin-top:14px; }
+  .preview-picker-item{ cursor:pointer; border:2px solid var(--border); border-radius:10px; padding:6px;
+    background:var(--surface-2); text-align:center; }
+  .preview-picker-item:hover{ border-color:var(--accent); }
+  .preview-picker-item.active{ border-color:var(--accent); box-shadow:0 0 0 2px var(--accent) inset; }
+  .preview-picker-item img{ display:block; width:100%; height:90px; object-fit:cover; border-radius:6px; }
+  .preview-picker-item .ph{ display:flex; width:100%; height:90px; border-radius:6px; background:var(--surface-3);
+    align-items:center; justify-content:center; color:var(--text-faint); font-size:24px; }
+  .preview-picker-item .lbl{ font-size:11px; color:var(--text-dim); margin-top:5px; word-break:break-all; }
   tbody td:nth-child(2){ max-width:210px; overflow-wrap:break-word; }
   footer.legend{ margin-top:14px; font-size:12px; color:var(--text-faint); max-width:90ch; }
   .count-note{ padding:10px 18px; font-size:12px; color:var(--text-faint); border-top:1px solid var(--border-soft); }
@@ -14677,6 +14773,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       </div>
     </div>
   </div>
+  <div class="overlay" id="previewPickerOverlay" hidden>
+    <div class="settings-panel" style="max-width:720px;">
+      <h2>Vorschaubild wählen</h2>
+      <p class="hint" id="previewPickerHint"></p>
+      <div id="previewPickerGrid" class="preview-picker-grid"></div>
+      <div class="settings-actions">
+        <button class="btn" id="closePreviewPickerBtn" type="button">Abbrechen</button>
+      </div>
+    </div>
+  </div>
   <div class="stats" id="stats"></div>
   <div class="panel now-panel" id="camPanel">
     <div class="now-head"><span class="now-dot" style="background:var(--text-dim);box-shadow:0 0 0 4px var(--surface-3);"></span><span>Kameranutzung gesamt</span></div>
@@ -14704,11 +14810,23 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
     <div class="tablewrap">
       <table>
+        <colgroup>
+          <col style="width:100px;">
+          <col style="width:calc((100% - 630px) * 0.30);">
+          <col style="width:130px;">
+          <col style="width:110px;">
+          <col style="width:130px;">
+          <col style="width:70px;">
+          <col style="width:90px;">
+          <col style="width:calc((100% - 630px) * 0.25);">
+          <col style="width:calc((100% - 630px) * 0.20);">
+          <col style="width:calc((100% - 630px) * 0.25);">
+        </colgroup>
         <thead><tr>
           <th class="img-col"></th>
           <th data-key="name">Objekt</th>
-          <th data-key="category">Typ</th>
-          <th data-key="statusSort">Status</th>
+          <th data-key="category" class="ctr-col">Typ</th>
+          <th data-key="statusSort" class="ctr-col">Status</th>
           <th data-key="lastModified" class="num-col">Letzte Bearbeitung</th>
           <th data-key="nights" class="num-col">Nächte</th>
           <th data-key="hours" class="num-col">Std. gesamt</th>
@@ -14913,10 +15031,10 @@ function render(){
       ? `<span class="obj-link" title="Klick öffnet den Ordner">${d.name}</span>`
       : `<span class="obj">${d.name}</span>`;
     return `<tr${d.path?` class="row-link" data-path="${encodeURIComponent(d.path)}"`:""}>
-      <td class="img-col">${img}</td>
+      <td class="img-col"${d.path?` title="Klick wählt das Vorschaubild"`:""}>${img}</td>
       <td>${nameHtml}${d.tag?`<span class="obj-sub">Monatshinweis: ${d.tag}</span>`:""}${d.note?`<span class="merge-note">${d.note}</span>`:""}</td>
-      <td><span class="cat">${d.category}</span></td>
-      <td><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span></td>
+      <td class="ctr-col"><span class="cat">${d.category}</span></td>
+      <td class="ctr-col"><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span></td>
       <td class="num-col">${fmtLastModified(d)}</td>
       <td class="num-col">${d.nights? d.nights : '<span class="none">&ndash;</span>'}</td>
       <td class="num-col">${fmtHours(d)}</td>
@@ -15020,15 +15138,88 @@ document.getElementById("nowBody").addEventListener("click", e=>{
 });
 document.getElementById("searchBox").addEventListener("input", e=>{ state.q=e.target.value.trim().toLowerCase(); render(); });
 document.querySelectorAll("thead th[data-key]").forEach(th=>{ th.addEventListener("click", ()=>{ const key=th.dataset.key; if(state.sortKey===key){state.sortDir*=-1;}else{state.sortKey=key;state.sortDir=1;} render(); }); });
-// Klick auf eine Zeile oeffnet den Ordner (siehe openFolder() oben). Ueber
-// den Tabellenkoerper delegiert, damit ein einziger Listener auch fuer neu
-// gerenderte Zeilen funktioniert.
+// Klick auf eine Zeile oeffnet den Ordner (siehe openFolder() oben), Klick
+// auf das Vorschaubild oeffnet stattdessen die Bildauswahl (siehe
+// openPreviewPicker() weiter unten) - beides ueber denselben Tabellenkoerper
+// delegiert, damit ein einziger Listener auch fuer neu gerenderte Zeilen
+// funktioniert. Die Bildzelle wird zuerst geprueft und beendet den Handler
+// dann mit return, damit nicht zusaetzlich noch der Ordner geoeffnet wird.
 document.getElementById("rows").addEventListener("click", e=>{
+  const thumbCell = e.target.closest("td.img-col");
+  if(thumbCell){
+    const tr = thumbCell.closest("tr[data-path]");
+    if(tr) openPreviewPicker(decodeURIComponent(tr.dataset.path));
+    return;
+  }
   const tr = e.target.closest("tr[data-path]");
   if(!tr) return;
   const path = decodeURIComponent(tr.dataset.path);
   openFolder(path);
 });
+
+// ----------------------------------------------------------------------
+// Vorschaubild-Auswahlfenster (Klick auf das Vorschaubild in der Tabelle)
+// ----------------------------------------------------------------------
+const previewPickerOverlay = document.getElementById("previewPickerOverlay");
+const previewPickerHint = document.getElementById("previewPickerHint");
+const previewPickerGrid = document.getElementById("previewPickerGrid");
+let previewPickerPath = null;
+
+function closePreviewPicker(){ previewPickerOverlay.hidden = true; previewPickerPath = null; }
+
+function openPreviewPicker(path){
+  previewPickerPath = path;
+  previewPickerHint.textContent = "Lade Bilder …";
+  previewPickerGrid.innerHTML = "";
+  previewPickerOverlay.hidden = false;
+  window.pywebview.api.list_preview_candidates(path).then(result=>{
+    if(previewPickerPath !== path) return; // Fenster wurde inzwischen fuer ein anderes Projekt geoeffnet
+    if(!result.ok){
+      previewPickerHint.textContent = result.error || "Fehler beim Laden.";
+      return;
+    }
+    previewPickerHint.textContent = result.items.length
+      ? "Klick auf ein Bild übernimmt es sofort als Vorschau."
+      : "Keine Bilddateien in diesem Ordner gefunden.";
+    const cur = result.current;
+    const tiles = [];
+    tiles.push(`<div class="preview-picker-item${cur.mode==="auto"?" active":""}" data-mode="auto">`
+      + `<div class="ph">&#9733;</div><div class="lbl">Automatisch</div></div>`);
+    tiles.push(`<div class="preview-picker-item${cur.mode==="none"?" active":""}" data-mode="none">`
+      + `<div class="ph">&#8709;</div><div class="lbl">Kein Bild</div></div>`);
+    for(const it of result.items){
+      const active = cur.mode==="file" && cur.path===it.path;
+      const inner = it.thumb ? `<img src="${it.thumb}" alt="">` : `<div class="ph">&#9729;</div>`;
+      tiles.push(`<div class="preview-picker-item${active?" active":""}" data-mode="file" `
+        + `data-relpath="${encodeURIComponent(it.path)}">${inner}<div class="lbl">${it.name}</div></div>`);
+    }
+    previewPickerGrid.innerHTML = tiles.join("");
+  }).catch(err=>{
+    previewPickerHint.textContent = "Fehler: " + err;
+  });
+}
+
+document.getElementById("closePreviewPickerBtn").addEventListener("click", closePreviewPicker);
+previewPickerOverlay.addEventListener("click", e=>{ if(e.target===previewPickerOverlay) closePreviewPicker(); });
+
+previewPickerGrid.addEventListener("click", e=>{
+  const tile = e.target.closest(".preview-picker-item");
+  if(!tile || !previewPickerPath) return;
+  const mode = tile.dataset.mode;
+  const relPath = mode==="file" ? decodeURIComponent(tile.dataset.relpath) : null;
+  previewPickerHint.textContent = "Wird gespeichert …";
+  window.pywebview.api.set_preview_override(previewPickerPath, mode, relPath).then(result=>{
+    if(result.ok){
+      closePreviewPicker();
+      location.reload();
+    } else {
+      previewPickerHint.textContent = result.error || "Fehler beim Speichern.";
+    }
+  }).catch(err=>{
+    previewPickerHint.textContent = "Fehler: " + err;
+  });
+});
+
 render();
 
 // ----------------------------------------------------------------------
@@ -15486,8 +15677,16 @@ class Api:
         progress_cb wird nur beim allerersten Start (aus on_start()) mitgegeben,
         damit der Splash-Screen live mitzaehlt; von JS aus (Einstellungen-Panel,
         Knopf "Speichern & neu einlesen") wird apply_settings() ohne dieses
-        Argument aufgerufen, dort bleibt der Fortschritt daher unsichtbar."""
-        cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+        Argument aufgerufen, dort bleibt der Fortschritt daher unsichtbar.
+
+        Basis ist bewusst die ZULETZT GESPEICHERTE Config (load_config), nicht
+        die blanke Werksvorgabe: new_cfg vom Einstellungen-Panel enthaelt nur
+        die dortigen Formularfelder, nicht z. B. preview_overrides (siehe
+        set_preview_override() weiter unten). Mit DEFAULT_CONFIG als Basis
+        wuerde ein ganz normales "Speichern & neu einlesen" alle bisher per
+        Vorschaubild-Auswahl gesetzten Overrides stillschweigend auf {}
+        zuruecksetzen."""
+        cfg = load_config(self.config_path)
         if isinstance(new_cfg, dict):
             cfg.update(new_cfg)
 
@@ -15517,6 +15716,72 @@ class Api:
         einlesen, ohne dass sich an den Einstellungen etwas aendert
         (z. B. ueber einen "Aktualisieren"-Knopf im Dashboard)."""
         return self.apply_settings(load_config(self.config_path))
+
+    def list_preview_candidates(self, project_path):
+        """Fuer das Vorschaubild-Auswahlfenster (Klick auf das Vorschaubild
+        in der Tabelle): alle infrage kommenden Bilddateien (jpg/png/tif/tiff)
+        im gegebenen Projektordner, jeweils mit Mini-Vorschau. Bewusst OHNE
+        die Screenshot-Namen-Filterung der automatischen Heuristik
+        (pick_preview_file) - hier waehlt der Nutzer selbst bewusst aus, da
+        darf z. B. auch eine "...annotated..."-Datei zur Auswahl stehen.
+        Nutzt denselben Thumbnail-Cache wie der normale Scan, damit bereits
+        erzeugte Vorschaubilder nicht doppelt berechnet werden."""
+        if not project_path or not os.path.isdir(project_path):
+            return {"ok": False, "error": "Ordner nicht gefunden.", "items": []}
+        try:
+            scan = scan_project(project_path)
+        except Exception as exc:
+            traceback.print_exc()
+            return {"ok": False, "error": str(exc), "items": []}
+
+        old_cache = load_thumb_cache(self.thumb_cache_path)
+        used_cache = {}
+        stats = {"hits": 0, "new": 0}
+        items = []
+        for rel, size, mtime in scan["final_files"]:
+            ext = os.path.splitext(rel)[1].lower()
+            if ext not in PREVIEW_EXT_SET:
+                continue
+            full = os.path.join(project_path, rel)
+            thumb = get_thumbnail_cached(
+                full, size, mtime, old_cache, used_cache, stats,
+                max_bytes=PREVIEW_PICKER_MAX_THUMB_BYTES)
+            items.append({"path": rel, "name": os.path.basename(rel), "thumb": thumb})
+        if used_cache:
+            merged = dict(old_cache)
+            merged.update(used_cache)
+            save_thumb_cache(self.thumb_cache_path, merged)
+        items.sort(key=lambda it: it["name"].lower())
+
+        if project_path not in PREVIEW_OVERRIDES:
+            current = {"mode": "auto"}
+        elif PREVIEW_OVERRIDES[project_path] is None:
+            current = {"mode": "none"}
+        else:
+            current = {"mode": "file", "path": PREVIEW_OVERRIDES[project_path]}
+        return {"ok": True, "items": items, "current": current}
+
+    def set_preview_override(self, project_path, mode, rel_path=None):
+        """Speichert die manuelle Vorschaubild-Wahl fuer ein Projekt
+        dauerhaft (Feld preview_overrides in AstroLogbuch_config.json) und
+        liest den Ordner danach neu ein, damit die Aenderung sofort sichtbar
+        wird. mode: "auto" (Eintrag entfernen, wieder automatische
+        Heuristik), "none" (explizit kein Bild) oder "file" (rel_path als
+        Vorschau verwenden)."""
+        if not project_path:
+            return {"ok": False, "error": "Kein Projektpfad angegeben."}
+        cfg = load_config(self.config_path)
+        overrides = dict(cfg.get("preview_overrides") or {})
+        if mode == "auto":
+            overrides.pop(project_path, None)
+        elif mode == "none":
+            overrides[project_path] = None
+        elif mode == "file" and rel_path:
+            overrides[project_path] = rel_path
+        else:
+            return {"ok": False, "error": "Ungültige Auswahl."}
+        cfg["preview_overrides"] = overrides
+        return self.apply_settings(cfg)
 
 
 def try_launch_webview(config, config_path, thumb_cache_path, object_cache_path, out_dir):

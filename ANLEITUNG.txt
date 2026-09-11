@@ -92,6 +92,20 @@ direkt zur passenden Tabellenzeile (Filter werden dafuer automatisch
 zurueckgesetzt, falls die Zeile sonst ausgeblendet waere) und hebt sie
 kurz farblich hervor.
 
+Vorschaubild manuell waehlen: Ein Klick auf das Vorschaubild einer
+Tabellenzeile (nicht auf den Rest der Zeile, der weiterhin den Ordner
+oeffnet) oeffnet ein Auswahlfenster mit allen Bilddateien im jeweiligen
+Projektordner. Zur Auswahl stehen "Automatisch" (die bisherige Heuristik -
+bevorzugt jpg/png vor tif/tiff, dann die groesste Datei, das ist der
+Normalfall und fuer die meisten Projekte bereits richtig), "Kein Bild"
+(z. B. sinnvoll fuer unfertige oder noch geplante Projekte) oder ein
+konkretes Bild aus dem Ordner. Ein Klick auf eines der Bilder uebernimmt
+es sofort und schliesst das Fenster automatisch. Die Wahl wird dauerhaft
+gespeichert und bleibt auch nach einem erneuten Einlesen erhalten. Sehr
+grosse Dateien (ueber 15 MB, z. B. rohe lineare Master-TIFFs direkt aus
+dem Stacking) bekommen im Auswahlfenster aus Geschwindigkeitsgruenden
+keine Live-Vorschau, bleiben aber trotzdem per Dateiname waehlbar.
+
 Falls das Programmfenster gar nicht erscheint oder sich seltsam verhaelt,
 braucht Windows zusaetzlich die "Microsoft Edge WebView2 Runtime", mit der
 das Fenster dargestellt wird. Auf einem aktuellen Windows 10 oder 11 ist

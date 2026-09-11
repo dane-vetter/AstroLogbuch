@@ -4,6 +4,33 @@ CHANGELOG - AstroLogbuch
 Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
 oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
 
+v1.8.0 - 2026-09-11
+--------------------
+- Neu: Vorschaubild laesst sich jetzt manuell waehlen. Ein Klick auf das
+  Vorschaubild in der Tabelle (statt auf den Rest der Zeile, der weiterhin
+  den Ordner oeffnet) oeffnet ein Auswahlfenster mit allen Bilddateien im
+  Projektordner: "Automatisch" (bisherige Heuristik, Normalfall), "Kein
+  Bild" (z. B. fuer unfertige/geplante Projekte) oder ein konkretes Bild.
+  Die Wahl wird dauerhaft gespeichert (AstroLogbuch_config.json, Feld
+  preview_overrides) und uebersteht auch ein normales "Speichern & neu
+  einlesen".
+- Bugfix: "- Done"/"- Fertig" mit Unterstrich (z. B. "M31_Done") wurde
+  bisher gar nicht erkannt, weil "_" regex-technisch als Wortzeichen zaehlt
+  und die bisherige Wortgrenzen-Pruefung dadurch nicht griff. Jetzt
+  funktionieren Bindestrich, Leerzeichen und Unterstrich gleichwertig, in
+  beliebiger Gross-/Kleinschreibung.
+- Performance: Das Vorschaubild-Auswahlfenster generiert keine Live-
+  Vorschau mehr fuer sehr grosse Dateien (>15 MB, z. B. rohe lineare
+  Master-TIFFs) - diese bleiben trotzdem per Namen waehlbar, nur ohne
+  Miniaturbild. Verhindert spuerbare Verzoegerungen beim Oeffnen des
+  Fensters bei Projekten mit sehr grossen Zwischendateien.
+- Tabellen-Layout ueberarbeitet: feste statt automatischer Spaltenbreiten
+  behebt mehrere Darstellungsprobleme auf einmal - ueberstehende
+  Spaltenkopf-Beschriftungen, grosse Luecken zwischen kurzen Spalten, und
+  unnoetig fruehe Zeilenumbrueche bei textreichen Spalten (Filter/
+  Aufnahmen, Kamera, Optimales Fenster). Alle Spalten sind jetzt einheitlich
+  zentriert (Kopf und Werte gleich ausgerichtet).
+
 v1.7.0 - 2026-09-09
 --------------------
 - Die AstroLogbuch.exe ist jetzt alleine weitergebbar, ohne die Datei
