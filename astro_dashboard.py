@@ -148,7 +148,7 @@ ALWAYS_EXCLUDED_FOLDER_NAMES = {"astrologbuch"}
 # Bei jeder inhaltlichen Aenderung erhoehen und einen Eintrag in
 # CHANGELOG.txt ergaenzen (siehe dort). Wird im Dashboard (Kopfzeile
 # rechts) angezeigt, damit erkennbar ist, welcher Stand gerade laeuft.
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.8.1"
 
 CONFIG_FILENAME = "AstroLogbuch_config.json"
 ICON_FILENAME = "AstroLogbuch.ico"  # neben Skript/EXE, siehe Schritt 2 in ANLEITUNG.txt
@@ -15465,8 +15465,23 @@ def make_dashboard_handler(state):
                     norm_target = os.path.normcase(os.path.normpath(os.path.abspath(target)))
                     # Sicherheitshalber nur Ordner innerhalb von ROOT_FOLDER
                     # oeffnen, nie einen beliebigen vom Browser mitgegebenen Pfad.
-                    inside_root = (norm_target == norm_root) or \
-                        norm_target.startswith(norm_root + os.sep)
+                    # os.path.commonpath() statt eines manuellen
+                    # startswith(root + os.sep)-Vergleichs: Ist der
+                    # Astro-Ordner eine reine Laufwerkswurzel (z. B. "K:\"),
+                    # behaelt os.path.normpath() dort bewusst den
+                    # abschliessenden Backslash (das ist unter Windows die
+                    # einzig gueltige Schreibweise fuer eine Laufwerkswurzel),
+                    # wodurch "root + os.sep" faelschlich einen doppelten
+                    # Backslash ergab und dadurch JEDE Unterordner-Pruefung
+                    # scheitern liess - beobachtet als "Kann Ordner nicht
+                    # oeffnen" bei allen Projekten, sobald der Astro-Ordner
+                    # direkt eine Laufwerkswurzel war. commonpath() vergleicht
+                    # stattdessen ueber die einzelnen Pfadbestandteile und ist
+                    # von diesem Sonderfall nicht betroffen.
+                    try:
+                        inside_root = os.path.commonpath([norm_root, norm_target]) == norm_root
+                    except ValueError:
+                        inside_root = False  # z. B. unterschiedliche Laufwerke
                     if inside_root and os.path.isdir(target):
                         open_in_explorer(target)
                         ok = True
@@ -15856,8 +15871,21 @@ def try_launch_webview(config, config_path, thumb_cache_path, object_cache_path,
     # bestimmt, die Fenstergroesse darauf begrenzt (kleiner Rand fuer
     # Taskleiste/Fensterrahmen) und explizit als screen= uebergeben - das
     # zentriert pywebview intern zuverlaessig selbst (siehe winforms.py).
+    #
+    # webview.screens[0] ist NICHT zuverlaessig der Hauptmonitor: die Liste
+    # kommt aus WinForms' Screen.AllScreens, dessen Reihenfolge von der
+    # Erkennungsreihenfolge der Grafikkarte abhaengt, nicht davon, welcher
+    # Bildschirm in den Windows-Anzeigeeinstellungen als "Hauptmonitor"
+    # gesetzt ist (beobachtet: Fenster oeffnete bei einem Nutzer mit zwei
+    # Monitoren zuverlaessig auf dem NEBENmonitor). Windows platziert den
+    # tatsaechlichen Hauptmonitor immer bei den virtuellen Desktop-
+    # Koordinaten (0, 0); alle anderen Monitore haben davon abweichende
+    # (auch negative) Koordinaten, je nach Anordnung. Deshalb wird hier
+    # gezielt der Bildschirm mit x=0/y=0 gesucht, statt einfach den ersten
+    # der Liste zu nehmen.
     try:
-        primary_screen = webview.screens[0]
+        screens = webview.screens
+        primary_screen = next((s for s in screens if s.x == 0 and s.y == 0), screens[0])
         screen_w, screen_h = primary_screen.width, primary_screen.height
     except Exception:
         primary_screen = None

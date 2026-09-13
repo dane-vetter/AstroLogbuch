@@ -4,6 +4,28 @@ CHANGELOG - AstroLogbuch
 Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
 oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
 
+v1.8.1 - 2026-09-13
+--------------------
+- Bugfix: Bei zwei oder mehr Monitoren oeffnete sich das Programmfenster
+  teils zuverlaessig auf dem NEBENmonitor statt auf dem in Windows
+  eingestellten Hauptmonitor. Ursache: webview.screens[0] gibt nicht
+  garantiert den Hauptmonitor zurueck, sondern nur den ersten Eintrag in
+  der von Windows gemeldeten Erkennungsreihenfolge, die von der
+  tatsaechlichen "Hauptmonitor"-Einstellung unabhaengig ist. Das Fenster
+  zentriert sich jetzt gezielt auf dem Bildschirm mit den virtuellen
+  Desktop-Koordinaten (0, 0) - das ist bei Windows immer der echte
+  Hauptmonitor, unabhaengig von der Erkennungsreihenfolge.
+- Bugfix: War der gewaehlte Astro-Ordner eine reine Laufwerkswurzel (z. B.
+  "K:\" statt "K:\Astro"), liess sich keine einzige Projektzeile mehr per
+  Klick im Explorer oeffnen ("Kann Ordner nicht oeffnen"/Pfad wird
+  stattdessen kopiert). Ursache: Der interne Sicherheitscheck (nur Ordner
+  unterhalb des gewaehlten Astro-Ordners duerfen geoeffnet werden) verglich
+  Pfade per Text-Praefix; bei einer Laufwerkswurzel haengt Windows dabei
+  intern zusaetzlich einen abschliessenden Backslash an, wodurch der
+  Vergleich durch einen doppelten Backslash immer fehlschlug. Der Vergleich
+  laeuft jetzt ueber os.path.commonpath(), das diesen Sonderfall korrekt
+  behandelt.
+
 v1.8.0 - 2026-09-11
 --------------------
 - Neu: Vorschaubild laesst sich jetzt manuell waehlen. Ein Klick auf das
