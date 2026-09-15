@@ -4,6 +4,39 @@ CHANGELOG - AstroLogbuch
 Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
 oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
 
+v1.9.0 - 2026-09-15
+--------------------
+- Neu: Kamera-Erkennung funktioniert jetzt auch fuer ASIAIR-Aufnahmen mit
+  DSLR/Systemkamera statt ZWO-ASI-Astrokamera (z. B. Sony A7R III). Dort
+  steht im Dateinamen "ISO<Zahl>" statt "gain<Zahl>", und die
+  Kamerabezeichnung taucht hinten zwischen den Zusatzfeldern auf statt wie
+  bisher davor. Bisher wurden solche Aufnahmen gar nicht als Kamera
+  erkannt.
+- Neu: Automatische Sammelordner-Erkennung. Liegen unterhalb eines
+  Astro-Ordners mehrere echte Projekte gemeinsam in einem uebergeordneten
+  Ordner (z. B. nach Montierung oder Kategorie sortiert), findet
+  AstroLogbuch jetzt automatisch die tatsaechlichen Projektordner darunter
+  (beliebig tief verschachtelt) und zeigt zusaetzlich "Gruppe: <Name>" in
+  der Tabelle an. Bewusst konservativ: ein Ordner gilt nur dann als
+  Sammelordner, wenn mindestens zwei seiner Unterordner selbst ein
+  erkennbares Astro-Signal tragen (Done-Tag, Monatshinweis,
+  Katalognummer, bekanntes Objekt) - interne Arbeitsordner eines
+  einzelnen Projekts (z. B. "Stack_PI") werden dadurch nicht faelschlich
+  aufgesplittet. Sonnensystem-Objekte (Mars, Mond, Jupiter, Saturn, Venus,
+  Kometen) zaehlen dabei ebenfalls als eigenes Signal, obwohl sie mangels
+  fester Himmelsposition nie in OBJECT_CATALOG stehen - sonst waere z. B.
+  ein Sammelordner "Sonnensystem" mit "Mars"/"Mond"/"Jupiter_180619" als
+  Kindern nicht als Sammelordner erkannt worden. Mit echten Ordnern
+  getestet (F:\Fotos\Astro\Sonnensystem).
+- Bugfix: Kamerazuordnung (Einstellungen) beachtete Gross-/Kleinschreibung
+  nicht korrekt - ein vom Nutzer gross geschriebener Eintrag griff bei
+  Dateinamen mit anderer Schreibweise stillschweigend nicht.
+- Bugfix: NGC 6960 und weitere Nummern aus dem Cirrusnebel/Schleiernebel-
+  Komplex (NGC 6974, 6979, 6992, 6995) wurden faelschlich als "Galaxie"
+  eingestuft. Ursache: Die Kategorie-Erkennung behandelte "ngc 69" als
+  ganzen Nummernbereich (69xx), gemeint war aber konkret NGC 6946
+  (Feuerwerksgalaxie). Von einem Nutzer per Mail gemeldet.
+
 v1.8.1 - 2026-09-13
 --------------------
 - Bugfix: Bei zwei oder mehr Monitoren oeffnete sich das Programmfenster

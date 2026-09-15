@@ -148,7 +148,7 @@ ALWAYS_EXCLUDED_FOLDER_NAMES = {"astrologbuch"}
 # Bei jeder inhaltlichen Aenderung erhoehen und einen Eintrag in
 # CHANGELOG.txt ergaenzen (siehe dort). Wird im Dashboard (Kopfzeile
 # rechts) angezeigt, damit erkennbar ist, welcher Stand gerade laeuft.
-APP_VERSION = "1.8.1"
+APP_VERSION = "1.9.0"
 
 CONFIG_FILENAME = "AstroLogbuch_config.json"
 ICON_FILENAME = "AstroLogbuch.ico"  # neben Skript/EXE, siehe Schritt 2 in ANLEITUNG.txt
@@ -249,7 +249,12 @@ def apply_config(cfg):
     exclude = cfg.get("exclude_folder_names", DEFAULT_CONFIG["exclude_folder_names"])
     EXCLUDE_FOLDER_NAMES = {str(w).strip().lower() for w in exclude if str(w).strip()} \
         | ALWAYS_EXCLUDED_FOLDER_NAMES
-    CAMERA_MAP = {str(k): str(v) for k, v in cfg.get("camera_map", {}).items()}
+    # Schluessel bewusst klein: resolve_camera_labels() schlaegt mit
+    # model.lower() nach. Bei ASI-Kameras ist der Schluessel eine reine
+    # Modellnummer ("2600"), da fiel das nie auf - bei DSLR-Bezeichnungen
+    # wie "A7RIIIJ" haette ein vom Nutzer gross geschriebener Eintrag
+    # sonst stillschweigend nicht gegriffen.
+    CAMERA_MAP = {str(k).lower(): str(v) for k, v in cfg.get("camera_map", {}).items()}
     FILTER_MAP = {str(k).upper(): str(v) for k, v in cfg.get("filter_map", {}).items()}
     calib = cfg.get("calib_words", DEFAULT_CONFIG["calib_words"])
     CALIB_WORDS = tuple(str(w).strip().lower() for w in calib if str(w).strip())
@@ -13411,6 +13416,56 @@ LIGHT_NAME_RE = re.compile(
     r'(?P<ts>\d{8}-\d{6})(?:_[^_]+)*_(?P<seq>\d+)\.\w+$',
     re.IGNORECASE)
 
+# Zweite Variante: ASIAIR mit DSLR/Systemkamera (z. B. Sony A7R III) statt
+# ZWO-ASI-Astrokamera. Dort sieht derselbe Aufnahmetyp so aus:
+#   Light_C 27 AM  400mm_210.0s_Bin1_ISO1600_20260710-033413_270deg_25.0C_A7RIIIJ_0001.fit
+# Zwei Unterschiede zum Muster oben: statt "gain<Zahl>" steht dort
+# "ISO<Zahl>", und VOR diesem Feld steht keine Kamerabezeichnung - die
+# taucht stattdessen hinten zwischen den Zusatzfeldern auf (hier
+# "A7RIIIJ", siehe camera_from_extra_fields()).
+#
+# WICHTIG, bewusst als EIGENES Muster statt als Erweiterung von
+# LIGHT_NAME_RE: scan_project() probiert immer zuerst das Muster oben und
+# nur bei Nichttreffer dieses hier. Ein Dateiname, der bisher erkannt
+# wurde, nimmt dadurch buchstaeblich denselben Weg wie vorher - das
+# bisherige Schema kann durch diese Erweiterung also nicht beeinflusst
+# werden, unabhaengig davon, wie dieses Muster hier formuliert ist.
+#
+# "gain" ist hier absichtlich auch erlaubt: Damit werden zusaetzlich
+# ASI-Namen OHNE Kamerafeld erkannt (".._Bin1_gain100_.."), die am Muster
+# oben bisher ebenfalls gescheitert sind.
+LIGHT_NAME_DSLR_RE = re.compile(
+    r'^(?P<type>Light)_[^_]*_(?P<exp>[\d.]+)s_Bin\d+_(?:iso|gain)\d+_'
+    r'(?P<ts>\d{8}-\d{6})(?P<extra>(?:_[^_]+)*)_(?P<seq>\d+)\.\w+$',
+    re.IGNORECASE)
+
+# Zusatzfelder, die ASIAIR/NINA hinter den Zeitstempel haengen und die
+# sicher KEINE Kamerabezeichnung sind: Rotator-/Meridianwinkel ("270deg"),
+# Sensortemperatur ("25.0C", "-0.1C"), Brennweite ("400mm"), Blende
+# ("f2.8"), Binning, ISO/Gain, Belichtung, Prozentangaben und reine Zahlen.
+_EXTRA_TECH_FIELD_RE = re.compile(
+    r'^(?:-?[\d.]+c|[\d.]+deg|[\d.]+mm|f[\d.]+|bin\d+|(?:iso|gain)\d+'
+    r'|[\d.]+s|[\d.]+%|[\d.]+)$',
+    re.IGNORECASE)
+
+
+def camera_from_extra_fields(extra):
+    """extra: der Teil des Dateinamens hinter dem Zeitstempel und vor der
+    laufenden Nummer, mit fuehrendem Unterstrich (z. B.
+    "_270deg_25.0C_A7RIIIJ"). Beim ASIAIR mit DSLR/Systemkamera steht die
+    Kamerabezeichnung dort statt vor dem ISO-Feld. Technische Felder
+    (Winkel, Temperatur, Brennweite, ...) werden uebersprungen, das
+    hinterste verbleibende Feld gilt als Kamerabezeichnung.
+
+    Kommt nichts in Frage, wird "" zurueckgegeben - die Aufnahme zaehlt
+    dann wie bisher unter "unbekannt" (dieselbe Behandlung wie bei einem
+    Dateinamen, der nur einen Filter und keine Kamera enthaelt)."""
+    tokens = [t for t in (extra or "").split("_") if t]
+    for token in reversed(tokens):
+        if not _EXTRA_TECH_FIELD_RE.match(token):
+            return token
+    return ""
+
 # FILTER_MAP und CAMERA_MAP sind Einstellungen (siehe apply_config()); die
 # Werte hier sind nur die Vorgabe, falls apply_config() aus irgendeinem
 # Grund uebersprungen wuerde. Kamera-Modellnummer (aus dem Dateinamen, z. B.
@@ -13444,7 +13499,12 @@ CATEGORY_KEYWORDS = [
     ("Konjunktion", ["konjunktion"]),
     ("Sternhaufen", ["sternhaufen", "cluster", "persei", "praesepe", "beehive"]),
     ("Galaxienhaufen", ["galaxienhaufen", "markarjan", "markarian", "coma", "abell 16", "lgg"]),
-    ("Galaxie", ["galaxie", "galaxy", "ngc 4", "ngc 5", "ngc 69", "m31", "m81", "m63", "m101"]),
+    # "ngc 69" bewusst NICHT als Bereich (69xx): NGC 6960/6974/6979/6992/6995
+    # liegen ebenfalls in diesem Bereich, gehoeren aber zum
+    # Cirrusnebel/Schleiernebel (Emissionsnebel, kein Galaxie) - ein
+    # Nutzer hat genau diese Fehlklassifizierung bei NGC 6960 gemeldet.
+    # Stattdessen die konkrete, tatsaechlich gemeinte Galaxie benennen.
+    ("Galaxie", ["galaxie", "galaxy", "ngc 4", "ngc 5", "ngc 6946", "m31", "m81", "m63", "m101"]),
 ]
 
 
@@ -13647,11 +13707,20 @@ def scan_project(path):
                 continue  # Kalibrierdaten zaehlen nicht als Light
 
             if ext in RAW_EXT:
+                # Zuerst immer das bisherige ASI-Muster; nur wenn das nicht
+                # passt, die DSLR-/ISO-Variante (siehe Kommentar bei
+                # LIGHT_NAME_DSLR_RE). Bei Variante 1 steckt die Kamera im
+                # mid-Feld vor "gain", bei Variante 2 in den Zusatzfeldern
+                # hinter dem Zeitstempel.
                 m = LIGHT_NAME_RE.match(fn)
                 if m:
-                    exp = float(m.group("exp"))
                     mid = m.group("mid")
-                    parts = mid.split("_")
+                else:
+                    m = LIGHT_NAME_DSLR_RE.match(fn)
+                    mid = camera_from_extra_fields(m.group("extra")) if m else ""
+                if m:
+                    exp = float(m.group("exp"))
+                    parts = [p for p in mid.split("_") if p]
                     filt = None
                     cam_parts = parts
                     # als Filter werten, wenn der letzte Teil ein bekannter
@@ -13660,7 +13729,7 @@ def scan_project(path):
                     # mindestens 2 Teile verlangt, wodurch ein Dateiname ohne
                     # Kamera-Feld (z. B. "..._Bin1_H_gain100_...") den Filter
                     # "H" faelschlich als Kamera "H" gezaehlt hat.
-                    if parts[-1].upper() in FILTER_MAP:
+                    if parts and parts[-1].upper() in FILTER_MAP:
                         filt = parts[-1].upper()
                         cam_parts = parts[:-1]
                     label = FILTER_MAP.get(filt, "OSC/kein Filter")
@@ -14239,6 +14308,7 @@ def resolve_camera_labels(all_scans):
 
 
 def build_entry_from_scan(name, scan, project_path, ref_year, resolve_camera, merged_from=None,
+                           group=None,
                            thumb_cache_old=None, thumb_cache_used=None, thumb_stats=None,
                            object_cache_old=None, object_cache_used=None, object_stats=None):
     # Kamera-Rohtoken auf die global aufgeloesten Labels ummappen (dabei
@@ -14317,47 +14387,190 @@ def build_entry_from_scan(name, scan, project_path, ref_year, resolve_camera, me
         "path": project_path,
         "bytes": scan["total_bytes"],
         "lastModified": scan["last_modified"] or None,
+        "group": group,
     }
+
+
+_SOLAR_SYSTEM_SIGNAL_CATEGORIES = ("Komet", "Mond", "Planet", "Konjunktion")
+
+
+def _folder_name_has_own_signal(name):
+    """Traegt der Ordnername selbst schon eines der Signale, auf die
+    detect_status()/find_object_coords() weiter oben ohnehin zurueckgreifen
+    (Done-/Fertig-Tag, Monatshinweis, Katalognummer oder ein Eintrag aus
+    OBJECT_CATALOG)? Wenn ja, gilt dieser Ordner - wie im ganzen Programm
+    ueblich - als EIN eigenstaendiges Projekt, unabhaengig davon, wie er
+    intern aufgebaut ist. Nur wenn KEINES davon zutrifft, kommt ueberhaupt
+    infrage, dass es sich um einen reinen Sammelordner handelt (siehe
+    discover_project_folders() weiter unten).
+
+    Sonnensystem-Objekte (Mars, Mond, Jupiter, Saturn, Venus, Kometen)
+    haben KEINE feste Himmelsposition und stehen deshalb nie in
+    OBJECT_CATALOG (siehe dort) und tragen so gut wie nie eine
+    Katalognummer - ohne den Zusatzcheck ueber CATEGORY_KEYWORDS haette
+    z. B. ein Sammelordner "Sonnensystem" mit Kindern "Mars", "Mond",
+    "Jupiter_180619" NICHT als Sammelordner gegolten (kein Kind mit
+    erkennbarem Signal), und waere faelschlich selbst als EIN Projekt
+    gelistet worden."""
+    lname = name.lower()
+    if re.search(r'(?<![a-z0-9])(?:done|fertig)(?![a-z0-9])', lname):
+        return True
+    if has_month_hint(name):
+        return True
+    for pattern, _prefix in CATALOG_NUM_PATTERNS:
+        if pattern.search(name):
+            return True
+    if any(key in lname for key in OBJECT_CATALOG):
+        return True
+    for cat, keywords in CATEGORY_KEYWORDS:
+        if cat in _SOLAR_SYSTEM_SIGNAL_CATEGORIES and any(k in lname for k in keywords):
+            return True
+    return False
+
+
+def _looks_like_grouping_folder(folder_name, subdirs):
+    """subdirs: bereits um ausgeschlossene Namen bereinigte Liste von
+    DirEntry-Objekten der direkten Unterordner. Bewusst KONSERVATIV: ein
+    Ordner gilt nur dann als reiner Sammelordner (z. B. nach Montierung
+    oder Kategorie sortiert), wenn ER SELBST kein eigenes Astro-Signal
+    traegt UND mindestens zwei seiner Unterordner UNABHAENGIG VONEINANDER
+    schon selbst ein solches Signal tragen (siehe
+    _folder_name_has_own_signal()) - nur DAS ist ein hinreichend sicherer
+    Beleg fuer "hier liegen mehrere echte, unterschiedliche Projekte
+    nebeneinander".
+
+    Eine fruehere, laxere Fassung hat stattdessen alles akzeptiert, was
+    nicht wie ein reiner Datums-/Session-Ordner aussah - das hat sich an
+    einem echten, langjaehrig gewachsenen Archiv als zu großzuegig
+    erwiesen: interne Arbeitsordner eines EINZELNEN Projekts wie
+    "Stack_PI", "CR_Stack"/"Non_CR_Stack" oder nach Brennweite/Sitzung
+    benannte Unterordner ("1280mm - 21.01.23") wurden dabei faelschlich
+    als eigene Projekte aufgesplittet. Mit der strengeren Regel bleiben
+    solche Faelle unangetastet (kein Kind traegt fuer sich ein erkennbares
+    Katalog-/Done-/Monats-Signal), waehrend z. B. ein Sammelordner mit
+    "M51 ... OK fertig" und "NGC 6960 ... 08.09.2026" als Kindern weiterhin
+    korrekt erkannt wird."""
+    if _folder_name_has_own_signal(folder_name):
+        return False
+    signaled = [e for e in subdirs
+                if not any(w in e.name.lower() for w in CALIB_WORDS)
+                and not any(w in e.name.lower() for w in STACK_WORDS)
+                and _folder_name_has_own_signal(e.name)]
+    return len(signaled) >= 2
+
+
+def _discover_projects_under(folder, group):
+    """Rekursiver Kern von discover_project_folders() (siehe dort fuer den
+    eigentlichen Einstiegspunkt). group ist der Name des naechstgelegenen
+    umschliessenden Sammelordners (oder None, falls folder direkt unter
+    dem gewaehlten Astro-Ordner liegt) - wird nur fuer die informative
+    "Gruppe"-Anzeige im Dashboard mitgefuehrt, hat auf die Status-/
+    Kategorie-Erkennung selbst keinen Einfluss (die bleibt wie bisher
+    allein am Namen des gefundenen Projektordners selbst festgemacht)."""
+    try:
+        with os.scandir(folder) as it:
+            subdirs = [e for e in it if e.is_dir(follow_symlinks=False)
+                       and e.name.lower() not in EXCLUDE_FOLDER_NAMES]
+    except OSError:
+        subdirs = []
+
+    if subdirs and _looks_like_grouping_folder(os.path.basename(folder), subdirs):
+        results = []
+        this_group = os.path.basename(folder)
+        for e in sorted(subdirs, key=lambda x: x.name.lower()):
+            lname = e.name.lower()
+            if any(w in lname for w in CALIB_WORDS) or any(w in lname for w in STACK_WORDS):
+                # Gemeinsame Kalibrierdaten des ganzen Sammelordners (z. B.
+                # eine fuer alle Ziele genutzte darks/flats-Bibliothek einer
+                # Montierung) oder ein interner Verarbeitungsordner - kein
+                # eigenes Projekt, wird hier bewusst uebersprungen statt als
+                # eigene (leere/verwirrende) Zeile zu erscheinen.
+                continue
+            results.extend(_discover_projects_under(e.path, this_group))
+        return results
+
+    return [(os.path.basename(folder), folder, group)]
+
+
+def discover_project_folders(root_folder):
+    """Findet die tatsaechlichen Projektordner unterhalb von root_folder.
+    Im bisherigen (weiterhin haeufigsten) Fall ist bereits jeder direkte
+    Unterordner von root_folder selbst ein Projekt - der Astro-Ordner
+    selbst gilt dabei nie als Projekt, nur seine direkten Unterordner
+    werden je einzeln betrachtet. Sieht ein solcher Unterordner dagegen
+    wie ein reiner Sammelordner aus (z. B. nach Montierung oder Kategorie
+    sortiert, ohne eigene Aufnahmen), wird automatisch eine Ebene tiefer
+    nach den echten Projekten gesucht - und das rekursiv, beliebig tief
+    (siehe _discover_projects_under()/_looks_like_grouping_folder()).
+
+    Gibt eine Liste von (name, path, group)-Tripeln zurueck. name ist der
+    eigene Ordnername des gefundenen Projekts (fuer Status-/Kategorie-
+    Erkennung massgeblich, siehe detect_status() weiter oben), path
+    dessen absoluter Pfad, group der Name des naechstgelegenen
+    Sammelordners oder None."""
+    try:
+        with os.scandir(root_folder) as it:
+            top = [e for e in it if e.is_dir(follow_symlinks=False)
+                   and e.name.lower() not in EXCLUDE_FOLDER_NAMES]
+    except OSError:
+        return []
+    results = []
+    for e in sorted(top, key=lambda x: x.name.lower()):
+        results.extend(_discover_projects_under(e.path, None))
+    return results
 
 
 def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=None, progress_cb=None):
     """progress_cb(current, total, text), falls angegeben, wird zusaetzlich
     zum print() bei jedem Fortschrittsschritt aufgerufen (fuer den
     Splash-Screen im Programmfenster, siehe render_loading_page())."""
-    # Phase 1: jeden Top-Level-Ordner einzeln einlesen
-    candidates = []
-    for entry in sorted(os.listdir(root_folder), key=str.lower):
-        full = os.path.join(root_folder, entry)
-        if not os.path.isdir(full):
-            continue
-        if entry.lower() in EXCLUDE_FOLDER_NAMES:
-            continue
-        candidates.append((entry, full))
+    # Phase 1: die tatsaechlichen Projektordner finden (siehe
+    # discover_project_folders() oben) und einzeln einlesen. Schluessel ist
+    # bewusst der absolute Pfad, nicht der blosse Ordnername: Bei
+    # verschachtelten Sammelordnern (Montierung/Kategorie/...) koennten
+    # sonst zwei Projekte mit zufaellig gleichem Namen in unterschiedlichen
+    # Zweigen einander ueberschreiben.
+    candidates = discover_project_folders(root_folder)
 
     total = len(candidates)
-    entries = {}
-    paths = {}
-    order = []
-    for i, (entry, full) in enumerate(candidates, start=1):
-        line = f"[{i}/{total}] Lese Ordner: {entry}"
+    entries = {}      # Pfad -> scan_project()-Ergebnis
+    names = {}        # Pfad -> eigener Ordnername
+    groups = {}        # Pfad -> Name des naechstgelegenen Sammelordners oder None
+    order = []          # Pfade in Fundreihenfolge
+    for i, (name, full, group) in enumerate(candidates, start=1):
+        line = f"[{i}/{total}] Lese Ordner: {name}"
         print(line, flush=True)
         if progress_cb:
             progress_cb(i, total * 2, line)
         try:
-            entries[entry] = scan_project(full)
+            entries[full] = scan_project(full)
         except Exception:
-            entries[entry] = None
-        paths[entry] = full
-        order.append(entry)
+            entries[full] = None
+        names[full] = name
+        groups[full] = group
+        order.append(full)
 
-    # Phase 2: MERGE_INTO anwenden (Quelle in Ziel einrechnen, Quelle entfernen)
+    # Phase 2: MERGE_INTO anwenden (Quelle in Ziel einrechnen, Quelle entfernen).
+    # MERGE_INTO ist ein reiner Handarbeits-Sonderfall (siehe Definition weiter
+    # oben) und verweist auf Ordnernamen, nicht auf Pfade. Bei verschachtelten
+    # Sammelordnern koennte derselbe Name mehrfach vorkommen - in dem seltenen
+    # Fall wird die Zusammenfuehrung fuer diesen Namen sicherheitshalber
+    # uebersprungen, statt versehentlich den falschen Zweig zu treffen.
+    name_to_paths = {}
+    for full, nm in names.items():
+        name_to_paths.setdefault(nm, []).append(full)
     merged_from_map = {}
     for src, dst in MERGE_INTO.items():
-        if src in entries and dst in entries and entries[src] is not None and entries[dst] is not None:
-            merge_scans(entries[dst], entries[src])
-            del entries[src]
-            order.remove(src)
-            merged_from_map.setdefault(dst, []).append(src)
+        src_paths = name_to_paths.get(src, [])
+        dst_paths = name_to_paths.get(dst, [])
+        if len(src_paths) != 1 or len(dst_paths) != 1:
+            continue
+        src_path, dst_path = src_paths[0], dst_paths[0]
+        if entries.get(src_path) is not None and entries.get(dst_path) is not None:
+            merge_scans(entries[dst_path], entries[src_path])
+            del entries[src_path]
+            order.remove(src_path)
+            merged_from_map.setdefault(dst_path, []).append(src)
 
     # Phase 3: Kamera-Modelle ueber alle verbliebenen Projekte hinweg aufloesen
     resolve_camera = resolve_camera_labels([s for s in entries.values() if s is not None])
@@ -14374,23 +14587,26 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
 
     projects = []
     total2 = len(order)
-    for i, name in enumerate(order, start=1):
+    for i, full in enumerate(order, start=1):
+        name = names[full]
         line = f"[{i}/{total2}] Werte aus / erzeuge Vorschaubild: {name}"
         print(line, flush=True)
         if progress_cb:
             progress_cb(total + i, total * 2, line)
-        scan = entries[name]
+        scan = entries[full]
         if scan is None:
             projects.append({
                 "name": clean_display_name(name), "tag": None, "category": "Sonstiges", "status": "unclear",
                 "nights": None, "hours": None, "hoursExact": False,
                 "filters": "Fehler beim Einlesen dieses Ordners", "cameras": "–", "camStats": {},
-                "note": "", "obs": None, "thumb": None, "path": paths.get(name), "bytes": 0, "lastModified": None,
+                "note": "", "obs": None, "thumb": None, "path": full, "bytes": 0, "lastModified": None,
+                "group": groups.get(full),
             })
             continue
         try:
             projects.append(build_entry_from_scan(
-                name, scan, paths[name], ref_year, resolve_camera, merged_from_map.get(name),
+                name, scan, full, ref_year, resolve_camera, merged_from_map.get(full),
+                group=groups.get(full),
                 thumb_cache_old=old_thumb_cache, thumb_cache_used=used_thumb_cache, thumb_stats=thumb_stats,
                 object_cache_old=old_object_cache, object_cache_used=used_object_cache, object_stats=object_stats))
         except Exception:
@@ -14398,7 +14614,8 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
                 "name": clean_display_name(name), "tag": None, "category": "Sonstiges", "status": "unclear",
                 "nights": None, "hours": None, "hoursExact": False,
                 "filters": "Fehler bei der Auswertung dieses Ordners", "cameras": "–", "camStats": {},
-                "note": "", "obs": None, "thumb": None, "path": paths.get(name), "bytes": 0, "lastModified": None,
+                "note": "", "obs": None, "thumb": None, "path": full, "bytes": 0, "lastModified": None,
+                "group": groups.get(full),
             })
 
     if thumb_cache_path:
@@ -15032,7 +15249,7 @@ function render(){
       : `<span class="obj">${d.name}</span>`;
     return `<tr${d.path?` class="row-link" data-path="${encodeURIComponent(d.path)}"`:""}>
       <td class="img-col"${d.path?` title="Klick wählt das Vorschaubild"`:""}>${img}</td>
-      <td>${nameHtml}${d.tag?`<span class="obj-sub">Monatshinweis: ${d.tag}</span>`:""}${d.note?`<span class="merge-note">${d.note}</span>`:""}</td>
+      <td>${nameHtml}${d.group?`<span class="obj-sub">Gruppe: ${d.group}</span>`:""}${d.tag?`<span class="obj-sub">Monatshinweis: ${d.tag}</span>`:""}${d.note?`<span class="merge-note">${d.note}</span>`:""}</td>
       <td class="ctr-col"><span class="cat">${d.category}</span></td>
       <td class="ctr-col"><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span></td>
       <td class="num-col">${fmtLastModified(d)}</td>
