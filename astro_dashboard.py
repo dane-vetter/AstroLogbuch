@@ -148,7 +148,7 @@ ALWAYS_EXCLUDED_FOLDER_NAMES = {"astrologbuch"}
 # Bei jeder inhaltlichen Aenderung erhoehen und einen Eintrag in
 # CHANGELOG.txt ergaenzen (siehe dort). Wird im Dashboard (Kopfzeile
 # rechts) angezeigt, damit erkennbar ist, welcher Stand gerade laeuft.
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.9.1"
 
 CONFIG_FILENAME = "AstroLogbuch_config.json"
 ICON_FILENAME = "AstroLogbuch.ico"  # neben Skript/EXE, siehe Schritt 2 in ANLEITUNG.txt
@@ -13454,14 +13454,21 @@ def camera_from_extra_fields(extra):
     laufenden Nummer, mit fuehrendem Unterstrich (z. B.
     "_270deg_25.0C_A7RIIIJ"). Beim ASIAIR mit DSLR/Systemkamera steht die
     Kamerabezeichnung dort statt vor dem ISO-Feld. Technische Felder
-    (Winkel, Temperatur, Brennweite, ...) werden uebersprungen, das
-    hinterste verbleibende Feld gilt als Kamerabezeichnung.
+    (Winkel, Temperatur, Brennweite, ...) stehen laut ASIAIR/NINA immer
+    VOR der Kamerabezeichnung, nie danach - deshalb wird von VORNE
+    gesucht und das ERSTE nicht-technische Feld genommen, nicht das
+    hinterste. Ein Nutzer haengt teils noch ein eigenes Kuerzel HINTER
+    die Kamera (z. B. "..._24.0C_A7III_TeS_0001.fit", "TeS" als eigene
+    Notiz zur Montierung) - mit "hinterstes Feld gewinnt" waere dabei
+    faelschlich "TeS" statt "A7III" als Kamera erkannt worden, weil auch
+    "TeS" nicht wie ein technisches Feld aussieht. Alles nach dem ersten
+    Treffer wird deshalb bewusst ignoriert.
 
     Kommt nichts in Frage, wird "" zurueckgegeben - die Aufnahme zaehlt
     dann wie bisher unter "unbekannt" (dieselbe Behandlung wie bei einem
     Dateinamen, der nur einen Filter und keine Kamera enthaelt)."""
     tokens = [t for t in (extra or "").split("_") if t]
-    for token in reversed(tokens):
+    for token in tokens:
         if not _EXTRA_TECH_FIELD_RE.match(token):
             return token
     return ""

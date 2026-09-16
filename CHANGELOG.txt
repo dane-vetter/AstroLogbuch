@@ -4,6 +4,19 @@ CHANGELOG - AstroLogbuch
 Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
 oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
 
+v1.9.1 - 2026-09-16
+--------------------
+- Bugfix: Bei der in v1.9.0 neuen Kamera-Erkennung fuer DSLR/System-
+  kameras (siehe camera_from_extra_fields()) wurde das HINTERSTE
+  nicht-technische Feld nach dem Zeitstempel als Kamera genommen.
+  Haengt ein Nutzer ein eigenes Kuerzel hinter die Kamerabezeichnung
+  (z. B. "..._24.0C_A7III_TeS_0001.fit" fuer eine Notiz zur Montierung),
+  wurde faelschlich dieses Kuerzel statt der echten Kamera erkannt.
+  Technische Felder (Winkel, Temperatur, ...) stehen bei ASIAIR/NINA
+  immer VOR der Kamera, nie danach - die Erkennung nimmt jetzt das
+  ERSTE nicht-technische Feld nach dem Zeitstempel und ignoriert alles
+  danach. Von einem Nutzer per Mail gemeldet.
+
 v1.9.0 - 2026-09-15
 --------------------
 - Neu: Kamera-Erkennung funktioniert jetzt auch fuer ASIAIR-Aufnahmen mit
