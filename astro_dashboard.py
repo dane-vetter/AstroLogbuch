@@ -87,7 +87,7 @@ from io import BytesIO
 from urllib.parse import urlparse, parse_qs, quote, urlencode
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 try:
     from PIL import Image
@@ -148,9 +148,10 @@ ALWAYS_EXCLUDED_FOLDER_NAMES = {"astrologbuch"}
 # Bei jeder inhaltlichen Aenderung erhoehen und einen Eintrag in
 # CHANGELOG.txt ergaenzen (siehe dort). Wird im Dashboard (Kopfzeile
 # rechts) angezeigt, damit erkennbar ist, welcher Stand gerade laeuft.
-APP_VERSION = "1.9.1"
+APP_VERSION = "1.9.2"
 
 CONFIG_FILENAME = "AstroLogbuch_config.json"
+ARCHIVE_FILENAME = "AstroLogbuch_archive.json"
 ICON_FILENAME = "AstroLogbuch.ico"  # neben Skript/EXE, siehe Schritt 2 in ANLEITUNG.txt
 
 # Laufzeit-Variablen, aus der Konfiguration befuellt (siehe apply_config()
@@ -13400,6 +13401,71 @@ RAW_EXT = {".fit", ".fits", ".fts", ".cr2", ".cr3", ".nef", ".arw", ".dng", ".ra
 CALIB_WORDS = tuple(DEFAULT_CONFIG["calib_words"])
 STACK_WORDS = ("stack", "masterlight", "integration", "pixinsight", "_pi")
 
+# Ordner, in die aussortierte (misslungene) Aufnahmen gelegt werden. Solche
+# Aufnahmen sollen nicht in Belichtungszeit und Aufnahmezahl eingehen - der
+# Nutzer hat sie ja bewusst verworfen, kein Stackprogramm wuerde sie
+# verwenden. Absichtlich nur als GANZER Ordnername (nach Entfernen von
+# Sonderzeichen), nie als Teilstring: Ein Projektordner heisst durchaus mal
+# "M44 ... klein loeschen", und der darf natuerlich nicht verschwinden.
+# Von einem Nutzer per Mail gemeldet ("den Unterordner falsch wuerde ich
+# nicht dazunehmen").
+REJECT_FOLDER_NAMES = frozenset({
+    "falsch", "falsche", "schlecht", "schlechte", "aussortiert",
+    "ausschuss", "verworfen", "unscharf", "unbrauchbar", "muell",
+    "reject", "rejects", "rejected", "bad", "trash", "papierkorb",
+})
+
+# Wortbestandteile, die eine Datei als Ergebnis der Bildbearbeitung
+# ausweisen (Siril "result"/"_stacked", DSS "Autosave", PixInsight
+# "integration", dazu Sternmasken und sternlose Varianten). Solche Dateien
+# sind zwar keine fertigen Bilder (sie liegen als .fit/.fits vor), zeigen
+# aber, dass an dem Projekt schon gearbeitet wurde - siehe detect_status().
+PROCESSED_NAME_WORDS = ("result", "autosave", "stacked", "starless",
+                        "starmask", "integration", "masterlight", "final",
+                        "drizzle")
+
+
+def is_reject_name(name):
+    """Ist das ein Ordner mit aussortierten Aufnahmen? Siehe
+    REJECT_FOLDER_NAMES."""
+    return _squash_name(name) in REJECT_FOLDER_NAMES
+
+# Ordnernamen, die eindeutig den Aufnahmeordner selbst bezeichnen. Solche
+# Ordner gelten NIE als Kalibrierordner, egal was unter "Kalibrier-
+# Schluesselwoerter" eingetragen ist (siehe is_calib_name()).
+LIGHT_FOLDER_NAMES = frozenset({
+    "light", "lights", "lightframe", "lightframes",
+    "licht", "lichter", "lichtbilder", "aufnahmen",
+})
+
+
+def _squash_name(name):
+    return re.sub(r'[^a-z0-9]+', '', (name or "").lower())
+
+
+def is_calib_name(name):
+    """Gilt dieser Ordner-/Dateiname als Kalibrierdaten (Flats/Darks/Bias)?
+
+    Der Vergleich gegen CALIB_WORDS ist absichtlich ein Teilstring-Vergleich,
+    damit auch "Darks 2026" oder "flats_400mm" erkannt werden. Genau das ist
+    aber eine Falle: Traegt ein Nutzer versehentlich ein Wort ein, das auch im
+    Namen seines AUFNAHME-Ordners steckt (z. B. "lights"), wird sein ganzer
+    Aufnahmeordner uebersprungen - das Dashboard zeigt dann bei jedem Projekt
+    nur noch "... Rohaufnahmen ohne auswertbares Namensschema", ohne Kamera und
+    ohne Stunden, und die Ursache ist praktisch nicht zu erraten (genau so per
+    Mail von einem Nutzer gemeldet, dessen Aufnahmen alle in "lights" lagen).
+
+    Deshalb hat ein Name, der fuer sich genommen klar den Aufnahmeordner
+    bezeichnet ("light", "lights", "Light Frames", ...), immer Vorrang und
+    gilt nie als Kalibrierordner. Ein Kalibrierordner wird dadurch nicht
+    faelschlich mitgezaehlt, denn "darks"/"flats" stehen nie fuer sich in
+    einem so benannten Ordner - liegen Darks IN einem "lights"-Ordner, wurden
+    sie auch bisher schon ueber ihren eigenen Dateinamen aussortiert."""
+    if _squash_name(name) in LIGHT_FOLDER_NAMES:
+        return False
+    lname = (name or "").lower()
+    return any(w in lname for w in CALIB_WORDS)
+
 HOUR_IN_NAME_RE = re.compile(r'(\d+(?:[.,]\d+)?)\s*h(?:ours?)?(?:[_\s]|$)', re.IGNORECASE)
 DATE_IN_NAME_RE = re.compile(r'(\d{1,2})[.\-_](\d{1,2})[.\-_](\d{2,4})')
 
@@ -13434,17 +13500,25 @@ LIGHT_NAME_RE = re.compile(
 # "gain" ist hier absichtlich auch erlaubt: Damit werden zusaetzlich
 # ASI-Namen OHNE Kamerafeld erkannt (".._Bin1_gain100_.."), die am Muster
 # oben bisher ebenfalls gescheitert sind.
+#
+# "extra" bewusst mit "[^_]*" (auch LEERE Zusatzfelder erlaubt), nicht
+# "[^_]+": Loescht ein Nutzer nachtraeglich sein eigenes Namenskuerzel
+# in der ASIAIR (siehe camera_from_extra_fields()), bleibt teils ein
+# doppelter Unterstrich uebrig (z. B. "..._A7III_TeS__0003.fit" ->
+# "TeS", dann ein LEERES Feld, dann "0003"). Mit "+" waere das leere
+# Feld nicht matchbar gewesen und der komplette Dateiname durchgefallen.
 LIGHT_NAME_DSLR_RE = re.compile(
     r'^(?P<type>Light)_[^_]*_(?P<exp>[\d.]+)s_Bin\d+_(?:iso|gain)\d+_'
-    r'(?P<ts>\d{8}-\d{6})(?P<extra>(?:_[^_]+)*)_(?P<seq>\d+)\.\w+$',
+    r'(?P<ts>\d{8}-\d{6})(?P<extra>(?:_[^_]*)*)_(?P<seq>\d+)\.\w+$',
     re.IGNORECASE)
 
 # Zusatzfelder, die ASIAIR/NINA hinter den Zeitstempel haengen und die
 # sicher KEINE Kamerabezeichnung sind: Rotator-/Meridianwinkel ("270deg"),
 # Sensortemperatur ("25.0C", "-0.1C"), Brennweite ("400mm"), Blende
-# ("f2.8"), Binning, ISO/Gain, Belichtung, Prozentangaben und reine Zahlen.
+# ("f2.8"), Binning ("Bin1" und die aeltere Schreibweise "1x1"), ISO/Gain,
+# Belichtung, Prozentangaben und reine Zahlen.
 _EXTRA_TECH_FIELD_RE = re.compile(
-    r'^(?:-?[\d.]+c|[\d.]+deg|[\d.]+mm|f[\d.]+|bin\d+|(?:iso|gain)\d+'
+    r'^(?:-?[\d.]+c|[\d.]+deg|[\d.]+mm|f[\d.]+|bin\d+|\d+x\d+|(?:iso|gain)\d+'
     r'|[\d.]+s|[\d.]+%|[\d.]+)$',
     re.IGNORECASE)
 
@@ -13473,6 +13547,86 @@ def camera_from_extra_fields(extra):
             return token
     return ""
 
+
+# Auffangnetz fuer Light-Dateinamen, die weder dem ASI- noch dem
+# DSLR-Muster folgen: Das ASIAIR schiebt je nach Version und Zubehoer
+# weitere Felder VOR die Belichtung (z. B. den Rotatorwinkel:
+# "Light_M 44_270deg_30.0s_Bin1_..."), und bei Auto-ISO steht im ISO-Feld
+# gar keine Zahl ("ISOAuto ISO"). Beide festen Muster scheitern daran,
+# obwohl der Name alles Notwendige enthaelt. Statt fuer jede Variante ein
+# weiteres Muster anzuhaengen, werden die Felder hier einzeln geprueft:
+# gesucht werden Belichtung, Zeitstempel und ein ISO-/Gain-Feld - in
+# welcher Reihenfolge und mit welchen Zusatzfeldern dazwischen, ist dabei
+# egal. Von einem Nutzer per Mail gemeldet.
+_TS_FIELD_RE = re.compile(r'^\d{8}-\d{6}$')
+_EXP_FIELD_RE = re.compile(r'^(?P<exp>[\d.]+)s$', re.IGNORECASE)
+# Auch ohne Zahl ("ISOAuto ISO", "gainAuto"), deshalb kein \d+ wie im Muster.
+_ISO_GAIN_FIELD_RE = re.compile(r'^(?:iso|gain)', re.IGNORECASE)
+
+
+def parse_light_fields(fn):
+    """Feldweise Erkennung als letzte Stufe (siehe match_light_name()).
+
+    Liefert (belichtung, datum, mid) wie die beiden festen Muster, oder
+    None. Verlangt werden "Light" am Anfang, eine laufende Nummer am Ende,
+    ein Zeitstempel und eine Belichtungsangabe davor. Diese vier Merkmale
+    zusammen sind eindeutig genug: Zwischendateien der Bildbearbeitung
+    ("light_00001.fit", "pp_light_00001.fit", "light_.seq") haben weder
+    Zeitstempel noch Belichtung und fallen weiterhin durch.
+
+    Ein ISO-/Gain-Feld wird ausdruecklich NICHT verlangt - es fehlt je
+    nach Aufnahmeprogramm und Kamera ganz ("Light_NGC 6960_300.0s_Bin1_
+    20260813-225438_273deg_sony_0001.fit"). Von einem Nutzer per Mail
+    gemeldet."""
+    stem = fn.rsplit(".", 1)[0]
+    tokens = stem.split("_")
+    if len(tokens) < 5 or tokens[0].lower() != "light":
+        return None
+    if not tokens[-1].isdigit():
+        return None
+    ts_idx = next((i for i, t in enumerate(tokens) if _TS_FIELD_RE.match(t)), None)
+    if ts_idx is None:
+        return None
+    head = tokens[1:ts_idx]          # zwischen "Light" und Zeitstempel
+    tail = tokens[ts_idx + 1:-1]     # zwischen Zeitstempel und laufender Nummer
+    exp_match = next((_EXP_FIELD_RE.match(t) for t in head
+                      if _EXP_FIELD_RE.match(t)), None)
+    if exp_match is None:
+        return None
+    iso_idx = next((i for i, t in enumerate(head) if _ISO_GAIN_FIELD_RE.match(t)), None)
+
+    # Kamera: wie beim DSLR-Muster zuerst hinter dem Zeitstempel suchen.
+    # Steht dort nichts (reines ASI-Schema mit zusaetzlichen Feldern vorne),
+    # das Feld direkt VOR dem ISO-/Gain-Feld nehmen - dort steht beim ASI
+    # die Kamera (ggf. samt Filter, "2600MM_Ha"), sofern es nicht selbst
+    # ein technisches Feld wie "Bin1" ist.
+    mid = camera_from_extra_fields("_".join(tail))
+    if not mid and iso_idx:
+        before = head[iso_idx - 1]
+        if not _EXTRA_TECH_FIELD_RE.match(before) and not _EXP_FIELD_RE.match(before):
+            mid = before
+    return float(exp_match.group("exp")), tokens[ts_idx][:8], mid
+
+
+def match_light_name(fn):
+    """Erkennt einen Light-Dateinamen in allen bekannten Varianten und
+    liefert (belichtung, datum, mid) oder None. mid ist der Teil, aus dem
+    weiter unten Kamera und Filter abgeleitet werden.
+
+    Reihenfolge ist wichtig: zuerst das urspruengliche ASI-Muster, dann
+    das DSLR-/ISO-Muster, erst zuletzt die feldweise Erkennung. So bleibt
+    fuer alle bisher schon erkannten Namen exakt das bisherige Ergebnis
+    stehen, und die freiere Erkennung greift nur dort, wo bisher gar
+    nichts erkannt wurde."""
+    m = LIGHT_NAME_RE.match(fn)
+    if m:
+        return float(m.group("exp")), m.group("ts")[:8], m.group("mid")
+    m = LIGHT_NAME_DSLR_RE.match(fn)
+    if m:
+        return (float(m.group("exp")), m.group("ts")[:8],
+                camera_from_extra_fields(m.group("extra")))
+    return parse_light_fields(fn)
+
 # FILTER_MAP und CAMERA_MAP sind Einstellungen (siehe apply_config()); die
 # Werte hier sind nur die Vorgabe, falls apply_config() aus irgendeinem
 # Grund uebersprungen wuerde. Kamera-Modellnummer (aus dem Dateinamen, z. B.
@@ -13482,6 +13636,36 @@ def camera_from_extra_fields(extra):
 # in CAMERA_MAP also nicht eingetragen werden.
 FILTER_MAP = dict(DEFAULT_CONFIG["filter_map"])
 CAMERA_MAP = dict(DEFAULT_CONFIG["camera_map"])
+
+
+def filter_from_folder_name(name):
+    """Sucht im Ordnernamen nach einem Filterkuerzel aus FILTER_MAP und
+    liefert dessen Schluessel (z. B. "HA") oder None.
+
+    Hintergrund: Ein Filterkuerzel im DATEInamen schreibt nur das
+    Aufnahmeprogramm selbst, und das kennt nur Filter, die es auch
+    schalten kann - also ein Filterrad. Wer einen Filter von Hand vor
+    oder in die Kamera schraubt (typisch bei DSLR/Systemkameras), hat
+    davon nirgends eine Spur in den Dateien, auch nicht im FITS-Header:
+    Die Aufnahmesoftware weiss von diesem Filter nichts. Dokumentiert
+    wird er dann im Ordnernamen ("... Askar 697mm HA Filter 15.09.2026").
+    Genau der wird hier ausgewertet. Von einem Nutzer per Mail gemeldet.
+
+    Verglichen wird bewusst nur gegen ganze, durch Nicht-Buchstaben
+    getrennte Woerter und erst ab zwei Zeichen Laenge: Ein Teilstring-
+    Vergleich wuerde "HA" mitten in "BienenstockHAufen" finden, und
+    einbuchstabige Kuerzel wie "L" oder "S" kaeme in Ordnernamen
+    fortlaufend zufaellig vor. Eigene Filterbezeichnungen (z. B.
+    "LEXTREME") lassen sich unter "Filter-Bezeichnungen" in den
+    Einstellungen ergaenzen und wirken dann hier automatisch mit."""
+    for token in re.split(r'[^A-Za-z0-9]+', name or ""):
+        if len(token) < 2:
+            continue
+        key = token.upper()
+        if key in FILTER_MAP:
+            return key
+    return None
+
 
 CAMERA_MODEL_RE = re.compile(r'(\d{3,4})')
 
@@ -13645,9 +13829,17 @@ def scan_project(path):
     """Läuft rekursiv durch einen Projektordner und sammelt Kennzahlen."""
     result = {
         "filters": {},          # Label -> {"count": n, "seconds": s}
+        # Labels, die nicht aus dem Dateinamen, sondern aus dem Ordnernamen
+        # abgeleitet wurden (siehe filter_from_folder_name()). Nur fuer den
+        # Hinweis in der Anzeige, die Zahlen selbst stehen in "filters".
+        "filters_from_folder": set(),
         "cameras": {},          # Label -> {"count": n, "seconds": s, "filtered": n, "unfiltered": n}
         "final_files": [],
         "stack_dirs_seen": False,
+        # Liegt mindestens eine Datei aus der Bildbearbeitung vor
+        # ("result.fit", "Autosave DSS.fit", ...)? Siehe
+        # PROCESSED_NAME_WORDS und detect_status().
+        "processed_files_seen": False,
         "raw_count": 0,
         "hours_from_names": 0.0,
         "hours_from_names_found": False,
@@ -13656,13 +13848,33 @@ def scan_project(path):
         "total_files": 0,
         "total_bytes": 0,       # Datenmenge auf der Platte, inkl. Kalibrierordner
         "last_modified": 0.0,   # juengste Aenderungszeit (Unix-Timestamp) unter den verarbeiteten Dateien
+        # juengstes mtime NUR unter Verarbeitungs-/Ergebnisdateien (final_files,
+        # PROCESSED_NAME_WORDS) - siehe edit_date(). Bewusst getrennt von
+        # last_modified oben, das ueber ALLE Dateien inkl. Rohaufnahmen laeuft.
+        "processed_mtime": 0.0,
     }
+
+    # Filterhinweis aus dem Projektordnernamen (siehe
+    # filter_from_folder_name()). Gilt fuer alle Aufnahmen darunter, deren
+    # Dateiname selbst keinen Filter nennt. Ein Unterordner darf ihn
+    # ueberschreiben, damit ein Projekt mit getrennten Filterordnern
+    # ("... / Ha", "... / OIII") korrekt aufgeteilt wird.
+    project_filter_hint = filter_from_folder_name(os.path.basename(path))
 
     for dirpath, dirnames, direntries in _scandir_walk(path):
         rel = os.path.relpath(dirpath, path)
         base = os.path.basename(dirpath).lower()
         if any(w in base for w in STACK_WORDS):
             result["stack_dirs_seen"] = True
+        folder_filter_hint = project_filter_hint
+        if rel != ".":
+            # Von innen nach aussen: der naechstgelegene Ordner mit
+            # Filterangabe gewinnt, sonst bleibt der Projekthinweis.
+            for part in reversed(rel.split(os.sep)):
+                hit = filter_from_folder_name(part)
+                if hit:
+                    folder_filter_hint = hit
+                    break
 
         # Kalibrierordner (Flats/Darks/Bias/...) enthalten nie Lights, koennen
         # aber zehntausende Dateien umfassen. In-place aus dirnames entfernen,
@@ -13673,7 +13885,13 @@ def scan_project(path):
         # (ein Projekt mit vielen Flats/Darks belegt echten Speicherplatz),
         # deshalb wird davor noch schnell nur die Groesse aufsummiert, ohne
         # jede Datei einzeln zu klassifizieren.
-        pruned = [d for d in dirnames if any(w in d.lower() for w in CALIB_WORDS)]
+        # Ordner mit aussortierten Aufnahmen ("falsch", "Ausschuss", ...)
+        # werden hier gleich mit uebersprungen (siehe is_reject_name()):
+        # Ihre Aufnahmen sollen weder in die Belichtungszeit noch in die
+        # Aufnahmezahl eingehen, ihr Speicherplatz aber weiterhin in der
+        # Datenmenge auftauchen - genau dieselbe Behandlung wie bei
+        # Kalibrierordnern.
+        pruned = [d for d in dirnames if is_calib_name(d) or is_reject_name(d)]
         if pruned:
             dirnames[:] = [d for d in dirnames if d not in pruned]
             for d in pruned:
@@ -13708,25 +13926,27 @@ def scan_project(path):
                 # spaeter fuer Vorschauauswahl/Cache-Pruefung kein zweites
                 # Mal einzeln angefasst werden.
                 result["final_files"].append((os.path.join(rel, fn), size, mtime))
+                if mtime > result["processed_mtime"]:
+                    result["processed_mtime"] = mtime
                 continue
 
-            if any(w in lfn for w in CALIB_WORDS) or any(w in base for w in CALIB_WORDS):
+            # Erkennung aller bekannten Light-Namensvarianten an einer
+            # Stelle, siehe match_light_name().
+            light = match_light_name(fn) if ext in RAW_EXT else None
+
+            # Eine Datei, die dem Light-Namensschema entspricht ("Light_..."
+            # mit Belichtung und gain/ISO), ist per Definition eine Aufnahme -
+            # Kalibrier-Schluesselwoerter duerfen sie nie aussortieren. Sonst
+            # loescht z. B. das Wort "light" in den Einstellungen saemtliche
+            # Aufnahmen aus der Auswertung (Darks/Flats heissen nie "Light_...",
+            # sie bleiben also weiterhin zuverlaessig aussortiert). Siehe auch
+            # is_calib_name() fuer denselben Schutz auf Ordnerebene.
+            if not light and (is_calib_name(lfn) or is_calib_name(base)):
                 continue  # Kalibrierdaten zaehlen nicht als Light
 
             if ext in RAW_EXT:
-                # Zuerst immer das bisherige ASI-Muster; nur wenn das nicht
-                # passt, die DSLR-/ISO-Variante (siehe Kommentar bei
-                # LIGHT_NAME_DSLR_RE). Bei Variante 1 steckt die Kamera im
-                # mid-Feld vor "gain", bei Variante 2 in den Zusatzfeldern
-                # hinter dem Zeitstempel.
-                m = LIGHT_NAME_RE.match(fn)
-                if m:
-                    mid = m.group("mid")
-                else:
-                    m = LIGHT_NAME_DSLR_RE.match(fn)
-                    mid = camera_from_extra_fields(m.group("extra")) if m else ""
-                if m:
-                    exp = float(m.group("exp"))
+                if light:
+                    exp, ts, mid = light
                     parts = [p for p in mid.split("_") if p]
                     filt = None
                     cam_parts = parts
@@ -13739,12 +13959,22 @@ def scan_project(path):
                     if parts and parts[-1].upper() in FILTER_MAP:
                         filt = parts[-1].upper()
                         cam_parts = parts[:-1]
+                    # Nennt der Dateiname keinen Filter, gilt ersatzweise der
+                    # Filter aus dem Ordnernamen (handgeschraubter Filter, siehe
+                    # filter_from_folder_name()). Bewusst nur als Rueckfall:
+                    # Was im Dateinamen steht, kommt direkt aus der
+                    # Aufnahmesoftware und hat immer Vorrang.
+                    filt_from_folder = False
+                    if filt is None and folder_filter_hint:
+                        filt = folder_filter_hint
+                        filt_from_folder = True
                     label = FILTER_MAP.get(filt, "OSC/kein Filter")
+                    if filt_from_folder:
+                        result["filters_from_folder"].add(label)
                     entry = result["filters"].setdefault(label, {"count": 0, "seconds": 0.0})
                     entry["count"] += 1
                     entry["seconds"] += exp
                     result["hours_from_names_found"] = True
-                    ts = m.group("ts")[:8]
                     result["dates_seen"].add(ts)
 
                     camera_raw = "_".join(cam_parts) if cam_parts else "unbekannt"
@@ -13756,10 +13986,28 @@ def scan_project(path):
                         camera_raw, {"count": 0, "seconds": 0.0, "filtered": 0, "unfiltered": 0})
                     cam_entry["count"] += 1
                     cam_entry["seconds"] += exp
-                    if filt:
+                    # Nur ein Filter AUS DEM DATEINAMEN zaehlt hier als
+                    # "mit Filter": Daraus wird weiter unten geschlossen, ob
+                    # eine Kamera Mono oder Farbe/OSC ist (ein Filterrad
+                    # betreibt man an einer Mono-Kamera). Ein von Hand
+                    # eingeschraubter Filter aus dem Ordnernamen sagt darueber
+                    # nichts aus - sonst wuerde z. B. eine Sony A7R III mit
+                    # Ha-Filter faelschlich als Mono-Kamera einsortiert.
+                    if filt and not filt_from_folder:
                         cam_entry["filtered"] += 1
                     else:
                         cam_entry["unfiltered"] += 1
+                elif any(w in lfn for w in PROCESSED_NAME_WORDS):
+                    # Ergebnis der Bildbearbeitung (siehe
+                    # PROCESSED_NAME_WORDS): zaehlt nicht als Aufnahme, ist
+                    # aber der Beweis, dass an dem Projekt gearbeitet wurde.
+                    # Bewusst NICHT in raw_count, sonst stuende in der
+                    # Tabelle "x Rohaufnahmen ohne auswertbares
+                    # Namensschema" fuer Dateien, die gar keine Aufnahmen
+                    # sind.
+                    result["processed_files_seen"] = True
+                    if mtime > result["processed_mtime"]:
+                        result["processed_mtime"] = mtime
                 else:
                     result["raw_count"] += 1
                     dm = DATE_IN_NAME_RE.search(fn)
@@ -13799,6 +14047,14 @@ def detect_status(name, scan):
     # "done"-Tag (Regel 1) markiert ein Projekt als tatsaechlich fertig.
     if scan["final_files"]:
         return "wip", None
+    # 2b. Kein fertiges Bild, aber Zwischenergebnisse der Bildbearbeitung
+    # ("result.fit", "Autosave DSS.fit", "starless_result.fit", ein
+    # Stack-Ordner). Wer stackt und Sterne entfernt, hat das Projekt
+    # eindeutig in Arbeit - vorher landete so ein Projekt unter "Nur
+    # Rohdaten", weil Siril, DSS & Co. ihre Ergebnisse als .fit/.fits
+    # ablegen und nicht als jpg/png. Von einem Nutzer per Mail gemeldet.
+    if scan["processed_files_seen"] or scan["stack_dirs_seen"]:
+        return "wip", None
     # 3. Monatshinweis im Namen
     month = has_month_hint(name)
     if month:
@@ -13823,6 +14079,39 @@ def total_hours(scan):
     return None, False
 
 
+def capture_date(scan):
+    """Juengstes aus den Light-Dateinamen geparstes Aufnahmedatum
+    (scan["dates_seen"], z. B. "20260722") - wann wurde an dem Projekt
+    zuletzt tatsaechlich fotografiert. None, wenn aus keinem Dateinamen
+    ein Datum ausgelesen werden konnte."""
+    if scan["dates_seen"]:
+        try:
+            newest = max(scan["dates_seen"])
+            return datetime.strptime(newest, "%Y%m%d").timestamp()
+        except (ValueError, OverflowError):
+            pass
+    return None
+
+
+def edit_date(scan):
+    """Datum der letzten BEARBEITUNG - bewusst etwas anderes als
+    capture_date() (wann fotografiert). Nimmt das Dateisystem-mtime der
+    juengsten Verarbeitungs-/Ergebnisdatei (scan["processed_mtime"]:
+    fertige Bilder, Stacks, "result.fit" u. ae., siehe scan_project()) -
+    NICHT das mtime irgendeiner beliebigen Datei im Projekt. Reine
+    Rohaufnahmen (Lights) bekommen naemlich bei jedem Kopieren/
+    Verschieben/Sichern faelschlich ein neues mtime (z. B. beobachtet nach
+    einer Uebertragung per WeTransfer) - eine Verarbeitungsdatei legt der
+    Nutzer dagegen selbst an, ihr mtime spiegelt deshalb zuverlaessiger
+    wider, wann zuletzt an dem Projekt gearbeitet wurde. Gibt es noch
+    keine Verarbeitungsdatei (reines Rohdaten-Projekt), faellt es auf das
+    mtime irgendeiner Datei im Projekt zurueck (scan["last_modified"]) -
+    besser eine ggf. ungenaue Angabe als gar keine. Von einem Nutzer per
+    Mail vorgeschlagen (er wollte urspruenglich statt des Aufnahmedatums
+    "das Datum der neuesten Datei aus dem Ordner ueber Lights")."""
+    return scan["processed_mtime"] or scan["last_modified"] or None
+
+
 def format_cameras(scan):
     parts = []
     for label, v in sorted(scan["cameras"].items(), key=lambda kv: -kv[1]["count"]):
@@ -13839,8 +14128,13 @@ def format_filters(scan):
     (Nutzerwunsch: machte die Zeile bei Projekten mit vielen Naechten sehr
     hoch und war gegenueber der Std.-gesamt-Spalte redundant)."""
     parts = []
+    from_folder = scan.get("filters_from_folder") or set()
     for label, v in sorted(scan["filters"].items()):
-        parts.append(f"{label} {v['count']}×{v['seconds']/v['count']:.0f}s")
+        # Stammt der Filter aus dem Ordnernamen statt aus dem Dateinamen,
+        # wird das offen dazugeschrieben - die Angabe ist eine Auslegung des
+        # Ordnernamens, keine Information aus der Aufnahmesoftware.
+        hint = " (laut Ordnername)" if label in from_folder else ""
+        parts.append(f"{label} {v['count']}×{v['seconds']/v['count']:.0f}s{hint}")
     if not parts and scan["raw_count"]:
         parts.append(f"{scan['raw_count']} Rohaufnahmen ohne auswertbares Namensschema")
     return " · ".join(parts) if parts else "–"
@@ -13860,6 +14154,31 @@ def save_object_cache(cache_path, cache):
             json.dump(cache, f)
     except Exception:
         pass  # auch dieser Zwischenspeicher ist nur eine Optimierung, kein Muss
+
+
+def load_archive(archive_path):
+    """Im Gegensatz zu den Caches oben (thumb_cache/object_cache) ist das
+    hier kein reiner Optimierungs-Zwischenspeicher, sondern die einzige
+    dauerhafte Ablage der archivierten "Fertig"-Projekte (siehe
+    scan_root(), Abschnitt Archiv) - ein Fehler beim Lesen darf also
+    keinesfalls zum stillen Datenverlust fuehren. Schlaegt das Lesen fehl
+    (Datei kaputt/fehlt), wird deshalb ein leeres Archiv angenommen statt
+    irgendetwas zu loeschen; save_archive() ueberschreibt die Datei dann
+    beim naechsten Schreibzugriff ohnehin nur additiv (bestehende
+    Eintraege bleiben, sofern ihr Projekt weiterhin "Fertig" ist)."""
+    try:
+        with open(archive_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_archive(archive_path, archive):
+    try:
+        with open(archive_path, "w", encoding="utf-8") as f:
+            json.dump(archive, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
 # Sesame (CDS Strasbourg, seit Jahrzehnten stabiler oeffentlicher Dienst) loest
@@ -14056,14 +14375,17 @@ def merge_scans(dst, src):
         e = dst["cameras"].setdefault(label, {"count": 0, "seconds": 0.0, "filtered": 0, "unfiltered": 0})
         e["count"] += v["count"]; e["seconds"] += v["seconds"]
         e["filtered"] += v["filtered"]; e["unfiltered"] += v["unfiltered"]
+    dst["filters_from_folder"] |= src["filters_from_folder"]
     dst["final_files"].extend(src["final_files"])
     dst["stack_dirs_seen"] = dst["stack_dirs_seen"] or src["stack_dirs_seen"]
+    dst["processed_files_seen"] = dst["processed_files_seen"] or src["processed_files_seen"]
     dst["raw_count"] += src["raw_count"]
     dst["session_hours"].update(src["session_hours"])
     dst["dates_seen"] |= src["dates_seen"]
     dst["total_files"] += src["total_files"]
     dst["total_bytes"] += src["total_bytes"]
     dst["last_modified"] = max(dst["last_modified"], src["last_modified"])
+    dst["processed_mtime"] = max(dst["processed_mtime"], src["processed_mtime"])
 
 
 PREVIEW_EXT_SET = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
@@ -14393,7 +14715,8 @@ def build_entry_from_scan(name, scan, project_path, ref_year, resolve_camera, me
         "thumb": thumb,
         "path": project_path,
         "bytes": scan["total_bytes"],
-        "lastModified": scan["last_modified"] or None,
+        "lastModified": edit_date(scan),
+        "captureDate": capture_date(scan),
         "group": group,
     }
 
@@ -14460,7 +14783,7 @@ def _looks_like_grouping_folder(folder_name, subdirs):
     if _folder_name_has_own_signal(folder_name):
         return False
     signaled = [e for e in subdirs
-                if not any(w in e.name.lower() for w in CALIB_WORDS)
+                if not is_calib_name(e.name)
                 and not any(w in e.name.lower() for w in STACK_WORDS)
                 and _folder_name_has_own_signal(e.name)]
     return len(signaled) >= 2
@@ -14486,7 +14809,7 @@ def _discover_projects_under(folder, group):
         this_group = os.path.basename(folder)
         for e in sorted(subdirs, key=lambda x: x.name.lower()):
             lname = e.name.lower()
-            if any(w in lname for w in CALIB_WORDS) or any(w in lname for w in STACK_WORDS):
+            if is_calib_name(lname) or any(w in lname for w in STACK_WORDS):
                 # Gemeinsame Kalibrierdaten des ganzen Sammelordners (z. B.
                 # eine fuer alle Ziele genutzte darks/flats-Bibliothek einer
                 # Montierung) oder ein interner Verarbeitungsordner - kein
@@ -14527,7 +14850,7 @@ def discover_project_folders(root_folder):
     return results
 
 
-def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=None, progress_cb=None):
+def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=None, archive_path=None, progress_cb=None):
     """progress_cb(current, total, text), falls angegeben, wird zusaetzlich
     zum print() bei jedem Fortschrittsschritt aufgerufen (fuer den
     Splash-Screen im Programmfenster, siehe render_loading_page())."""
@@ -14607,7 +14930,7 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
                 "nights": None, "hours": None, "hoursExact": False,
                 "filters": "Fehler beim Einlesen dieses Ordners", "cameras": "–", "camStats": {},
                 "note": "", "obs": None, "thumb": None, "path": full, "bytes": 0, "lastModified": None,
-                "group": groups.get(full),
+                "captureDate": None, "group": groups.get(full),
             })
             continue
         try:
@@ -14622,7 +14945,7 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
                 "nights": None, "hours": None, "hoursExact": False,
                 "filters": "Fehler bei der Auswertung dieses Ordners", "cameras": "–", "camStats": {},
                 "note": "", "obs": None, "thumb": None, "path": full, "bytes": 0, "lastModified": None,
-                "group": groups.get(full),
+                "captureDate": None, "group": groups.get(full),
             })
 
     if thumb_cache_path:
@@ -14643,6 +14966,50 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
         if object_stats["failed"]:
             print("Online-Namensauflösung war nicht erreichbar (kein Internet? Firewall?), "
                   "betroffene Objekte bleiben ohne optimales Fenster.", flush=True)
+
+    # Archiv: "Fertig"-Projekte dauerhaft sichern (siehe ARCHIVE_FILENAME),
+    # damit sie im Logbuch sichtbar bleiben, auch wenn der Rohdaten-Ordner
+    # spaeter geloescht wird (begrenzter Speicherplatz) - "AstroLogbuch"
+    # soll ein echtes Logbuch sein, keine reine Live-Ansicht des aktuellen
+    # Datei-Bestands. Von einem Nutzer per Mail vorgeschlagen. Das
+    # Vorschaubild wird 1:1 aus dem bereits berechneten Thumbnail
+    # uebernommen (Data-URI-String, siehe make_thumbnail()) - keine
+    # separate Bilddatei noetig, die verwaisen koennte.
+    if archive_path:
+        archive = load_archive(archive_path)
+        live_names = set()
+        changed = False
+        for p in projects:
+            live_names.add(p["name"])
+            if p["status"] != "done":
+                continue
+            prev = archive.get(p["name"])
+            new_entry = {
+                "name": p["name"], "category": p["category"],
+                "nights": p["nights"], "hours": p["hours"], "hoursExact": p["hoursExact"],
+                "filters": p["filters"], "cameras": p["cameras"], "thumb": p["thumb"],
+                "lastModified": p["lastModified"], "captureDate": p["captureDate"],
+                "originalPath": p["path"],
+                "archivedAt": (prev or {}).get("archivedAt") or time.time(),
+            }
+            if prev != new_entry:
+                archive[p["name"]] = new_entry
+                changed = True
+        for name, entry in archive.items():
+            if name in live_names:
+                continue  # Ordner existiert noch, Live-Zeile hat Vorrang
+            projects.append({
+                "name": entry.get("name", name), "tag": None,
+                "category": entry.get("category", "Sonstiges"), "status": "archived",
+                "nights": entry.get("nights"), "hours": entry.get("hours"),
+                "hoursExact": entry.get("hoursExact", False),
+                "filters": entry.get("filters") or "–", "cameras": entry.get("cameras") or "–",
+                "camStats": {}, "note": "", "obs": None, "thumb": entry.get("thumb"),
+                "path": None, "bytes": 0, "lastModified": entry.get("lastModified"),
+                "captureDate": entry.get("captureDate"), "group": None,
+            })
+        if changed:
+            save_archive(archive_path, archive)
     return projects
 
 
@@ -14790,6 +15157,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .settings-field label{ display:block; font-size:12px; font-weight:600; color:var(--text-dim);
     margin-bottom:5px; text-transform:uppercase; letter-spacing:.05em; }
   .settings-field .field-hint{ font-size:11.5px; color:var(--text-faint); margin-top:4px; }
+  .settings-field .field-hint.warn{ color:var(--warn); }
   .settings-field input[type="text"], .settings-field input[type="number"], .settings-field textarea{
     width:100%; box-sizing:border-box; font-family:'IBM Plex Sans',sans-serif; font-size:13px;
     padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2);
@@ -14835,6 +15203,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
      statt in eine zweite Zeile umzubrechen. */
   thead th{ position:sticky; top:0; background:var(--surface-2); text-align:center; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-faint); font-weight:600; padding:8px 12px; border-bottom:1px solid var(--border); cursor:pointer; }
   thead th:hover{ color:var(--text); }
+  /* Sortier-Hinweis: ALLE sortierbaren Spalten bekommen dauerhaft ein
+     dezentes Symbol (sonst sieht niemand VOR dem ersten Klick, dass eine
+     Spalte ueberhaupt sortierbar ist - nur die aktive Spalte allein
+     reicht als Hinweis nicht, siehe naechste Regel). Die aktive
+     Sortier-Spalte (per JS in render() als Klasse+Datenattribut gesetzt,
+     siehe dort) ueberschreibt das mit einem deutlichen Pfeil in voller
+     Deckkraft und der tatsaechlichen Richtung. Von einem Nutzer per Mail
+     gemeldet (zweimal: erst fehlte jedes Zeichen, dann war es nur bei
+     der aktiven Spalte sichtbar)." */
+  thead th[data-key]::after{ content:" \21C5"; font-size:9px; opacity:.4; }
+  thead th.sort-active{ color:var(--text); }
+  thead th.sort-active::after{ content:" \25B2"; font-size:9px; opacity:1; }
+  thead th.sort-active[data-dir="-1"]::after{ content:" \25BC"; }
   tbody td{ padding:7px 9px; border-bottom:1px solid var(--border-soft); vertical-align:top; text-align:center; }
   tbody tr:hover{ background:var(--surface-2); }
   tbody tr:last-child td{ border-bottom:none; }
@@ -14883,6 +15264,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .pill.open{ background:var(--warn-soft); color:var(--warn); } .pill.open .dot{ background:var(--warn); }
   .pill.unclear{ background:var(--bad-soft); color:var(--bad); } .pill.unclear .dot{ background:var(--bad); }
   .pill.neutral{ background:var(--neutral-soft); color:var(--neutral); } .pill.neutral .dot{ background:var(--neutral); }
+  .archive-del{ margin-left:6px; border:none; background:none; color:var(--text-faint); cursor:pointer; font-size:15px; line-height:1; padding:0 3px; }
+  .archive-del:hover{ color:var(--bad); }
   .none{ color:var(--text-faint); }
   /* Kein max-width mehr hier: die Spaltenbreite kommt jetzt fest aus der
      <colgroup> (table-layout:fixed), ein zusaetzlicher Cap hier wuerde nur
@@ -14988,6 +15371,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <label>Kalibrier-Schlüsselwörter</label>
           <p class="field-hint">Kommagetrennt. Ordner, deren Name eines dieser Wörter enthält, gelten als Flats/Darks/Bias und zählen nicht als Fortschritt.</p>
           <textarea id="cfgCalibWords"></textarea>
+          <p class="field-hint warn" id="cfgCalibWarn" hidden></p>
         </div>
       </div>
       <div class="settings-actions">
@@ -15051,12 +15435,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <th data-key="name">Objekt</th>
           <th data-key="category" class="ctr-col">Typ</th>
           <th data-key="statusSort" class="ctr-col">Status</th>
-          <th data-key="lastModified" class="num-col">Letzte Bearbeitung</th>
+          <th data-key="lastModified" class="num-col" title="Datum der neuesten Verarbeitungs-/Ergebnisdatei, nicht der Rohaufnahmen. Aufnahmedatum steht unter dem Objektnamen.">Letzte Bearbeitung</th>
           <th data-key="nights" class="num-col">Nächte</th>
           <th data-key="hours" class="num-col">Std. gesamt</th>
           <th data-key="filters">Filter / Aufnahmen</th>
           <th data-key="cameras">Kamera</th>
-          <th data-key="obsSort">Optimales Fenster</th>
+          <th data-key="obsSort" title="Beste Zeit im Jahr, um dieses Objekt zu fotografieren">Beobachtungsfenster</th>
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
@@ -15069,10 +15453,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     (der Ordner kann trotzdem Daten enthalten, z.&nbsp;B. Kalibrieraufnahmen oder ein Format, das nicht erkannt wird - "Geplant"
     bezieht sich nur auf den fehlenden Fortschritt, nicht auf die Ordnergrösse). <b>Nur Rohdaten</b> = nur Light-Frames, kein Stack.
     <b>Unklar</b> = Stack vorhanden, kein Endbild. <b>Kaum begonnen</b> = fast keine Dateien.<br><br>
+    Letzte Bearbeitung: Datum der neuesten Verarbeitungs-/Ergebnisdatei (Stack, fertiges Bild, ...), nicht der Rohaufnahmen -
+    gibt es noch keine, ersatzweise das Dateisystem-Datum irgendeiner Datei im Projekt. Aufnahme (zweite Zeile in derselben
+    Spalte, falls vorhanden und abweichend): aus den Light-Dateinamen geparstes Datum der letzten Aufnahmenacht.<br><br>
     Std. gesamt: nur wenn im Unterordnernamen (z.&nbsp;B. "..._8.3h") oder im ASIAIR/NINA-Dateinamen eine Belichtungszeit steht;
     sonst bewusst leer statt geschätzt. Kamera: aus dem Dateinamen-Feld vor "gainXXX" gelesen (Kurzcode, z.&nbsp;B. "2600"); eigene
     Namen dafür in den Einstellungen (Zahnrad oben rechts) hinterlegbar. Flats/Darks/Bias zählen nirgends in die Belichtungszeit hinein.
-    Optimales Fenster: Näherung für %%LATITUDE%%&deg; Nord, über eingebaute Kataloge und ggf. Online-Namensauflösung ermittelt
+    Beobachtungsfenster: bei allen Status gezeigt, auch "Fertig" (z. B. falls du ein fertiges Projekt nochmal erweitern willst).
+    Näherung für %%LATITUDE%%&deg; Nord, über eingebaute Kataloge und ggf. Online-Namensauflösung ermittelt
     (siehe ANLEITUNG.txt), nicht für jedes Objekt verfügbar (u.&nbsp;a. nie für Kometen);
     Wetter, Mond und Horizonthindernisse sind nicht berücksichtigt. Bild: Vorschau aus einer vorhandenen fertigen Datei
     (jpg/png/tif), keine KI-generierte Darstellung; bei mehreren Kandidaten wird die Datei mit der grössten Pixelfläche
@@ -15091,6 +15479,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </div>
 <script>
 const DATA = %%DATA_JSON%%;
+// Aus LIGHT_FOLDER_NAMES im Python-Teil gespiegelt (siehe is_calib_name()),
+// damit die Warnung im Einstellungsdialog nicht von der tatsaechlichen
+// Auswertung abweichen kann.
+const LIGHT_FOLDER_NAMES = %%LIGHT_FOLDER_NAMES_JSON%%;
 
 const STATUS_META = {
   "done":        {label:"Fertig",        cls:"done",    sort:0},
@@ -15099,6 +15491,7 @@ const STATUS_META = {
   "raw-only":    {label:"Nur Rohdaten",  cls:"unclear", sort:3},
   "unclear":     {label:"Unklar",        cls:"unclear", sort:4},
   "barely":      {label:"Kaum begonnen", cls:"neutral", sort:5},
+  "archived":    {label:"Archiviert",    cls:"neutral", sort:6},
 };
 const MONTHS_DE = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
 let state = { status:"all", cat:"all", q:"", sortKey:"lastModified", sortDir:-1, previewMonth: new Date().getMonth()+1, hideFinishedNow:true };
@@ -15153,6 +15546,10 @@ function openFolder(path){
 function inWindow(m, start, end){ if(start<=end) return m>=start && m<=end; return m>=start || m<=end; }
 
 function fmtObsCell(d){
+  // Wird jetzt bewusst bei ALLEN Status gezeigt, auch "Fertig" - ein
+  // frueherer Versuch, das bei Fertig auszublenden, wurde von einem
+  // Nutzer per Mail wieder zurueckgenommen ("kann ruhig auch bei Fertig
+  // stehen").
   const o = d.obs;
   if(!o) return '<span class="none">&ndash;</span>';
   const now = new Date().getMonth()+1;
@@ -15170,11 +15567,21 @@ function fmtHours(d){
   if(d.hours==null) return '<span class="none">&ndash;</span>';
   return `<span>${d.hoursExact?'':'~'}${d.hours}</span> h`;
 }
-function fmtLastModified(d){
-  if(!d.lastModified) return '<span class="none">&ndash;</span>';
-  const dt = new Date(d.lastModified*1000);
+function fmtDateShort(ts){
+  if(!ts) return null;
+  const dt = new Date(ts*1000);
   const pad = n => String(n).padStart(2,"0");
   return `${pad(dt.getDate())}.${pad(dt.getMonth()+1)}.${dt.getFullYear()}`;
+}
+function fmtDateCell(d){
+  // Bearbeitung und Aufnahme gehoeren zusammen (Nutzerwunsch), stehen
+  // deshalb hier gemeinsam statt Aufnahme separat unter dem Objektnamen.
+  const edited = fmtDateShort(d.lastModified);
+  const captured = fmtDateShort(d.captureDate);
+  if(!edited && !captured) return '<span class="none">&ndash;</span>';
+  let out = edited || '<span class="none">&ndash;</span>';
+  if(captured && captured!==edited) out += `<span class="obj-sub">Aufnahme: ${captured}</span>`;
+  return out;
 }
 function fmtBytes(b){
   if(!b) return "0 GB";
@@ -15182,6 +15589,25 @@ function fmtBytes(b){
   let i=0, v=b;
   while(v>=1024 && i<units.length-1){ v/=1024; i++; }
   return `${v>=100?Math.round(v):v.toFixed(1)} ${units[i]}`;
+}
+
+// Suchtreffer im Objektnamen. Bewusst nicht nur ein direkter
+// Teilstring-Vergleich: Objektbezeichnungen werden in Ordnernamen mal mit,
+// mal ohne Leerzeichen oder Trennzeichen geschrieben ("M 31 20.07.26",
+// "M31", "SH2-131", "NGC 6960"). Wer "M31" eintippt, meint auch "M 31" -
+// deshalb wird zusaetzlich ein auf Buchstaben/Ziffern reduzierter Vergleich
+// gemacht. Von einem Nutzer per Mail gemeldet ("Gebe ich M31 ein, kommt
+// nix"). Der Gruppenname (Sammelordner) wird mitdurchsucht, damit sich mit
+// der Suche auch schnell eine Montierung/Kategorie eingrenzen laesst.
+function squashForSearch(s){
+  return (s||"").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function matchesQuery(d, q){
+  const hay = [d.name, d.group].filter(Boolean);
+  if(hay.some(s => s.toLowerCase().includes(q))) return true;
+  const sq = squashForSearch(q);
+  return sq !== "" && hay.some(s => squashForSearch(s).includes(sq));
 }
 
 function render(){
@@ -15217,7 +15643,7 @@ function render(){
     <div class="stat accent"><div class="v">${Math.round(totalHours)}<span style="font-size:14px">h</span></div><div class="l">Dokumentierte Zeit</div><div class="v-sub">&nbsp;</div></div>
     <div class="stat"><div class="v">${DATA.reduce((s,d)=>s+(d.nights||0),0)}</div><div class="l">Aufnahmenächte</div><div class="v-sub">&nbsp;</div></div>`;
 
-  const statusChipDefs = [["all","Alle"],["done","Fertig"],["wip","In Arbeit"],["open-date","Geplant"],["raw-only","Rohdaten"],["unclear","Unklar"],["barely","Kaum begonnen"]];
+  const statusChipDefs = [["all","Alle"],["done","Fertig"],["wip","In Arbeit"],["open-date","Geplant"],["raw-only","Rohdaten"],["unclear","Unklar"],["barely","Kaum begonnen"],["archived","Archiviert"]];
   document.getElementById("statusChips").innerHTML = statusChipDefs.map(([key,label])=>{
     const active = state.status===key ? "active":"";
     const n = key==="all" ? DATA.length : (statusCounts[key]||0);
@@ -15235,7 +15661,7 @@ function render(){
       return false;
     }
     if(state.cat!=="all" && d.category!==state.cat) return false;
-    if(state.q && !(d.name.toLowerCase().includes(state.q))) return false;
+    if(state.q && !matchesQuery(d, state.q)) return false;
     return true;
   });
   rows = rows.map(d=>({...d, statusSort: STATUS_META[d.status].sort, obsSort: obsSortValue(d)}));
@@ -15246,6 +15672,11 @@ function render(){
     if(bv==null) bv = numericNullKeys.includes(state.sortKey) ? -1 : "";
     if(typeof av==="string") return av.localeCompare(bv)*state.sortDir;
     return (av-bv)*state.sortDir;
+  });
+  document.querySelectorAll("thead th[data-key]").forEach(th=>{
+    const isActive = th.dataset.key===state.sortKey;
+    th.classList.toggle("sort-active", isActive);
+    if(isActive) th.dataset.dir = state.sortDir; else delete th.dataset.dir;
   });
 
   document.getElementById("rows").innerHTML = rows.map(d=>{
@@ -15258,8 +15689,8 @@ function render(){
       <td class="img-col"${d.path?` title="Klick wählt das Vorschaubild"`:""}>${img}</td>
       <td>${nameHtml}${d.group?`<span class="obj-sub">Gruppe: ${d.group}</span>`:""}${d.tag?`<span class="obj-sub">Monatshinweis: ${d.tag}</span>`:""}${d.note?`<span class="merge-note">${d.note}</span>`:""}</td>
       <td class="ctr-col"><span class="cat">${d.category}</span></td>
-      <td class="ctr-col"><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span></td>
-      <td class="num-col">${fmtLastModified(d)}</td>
+      <td class="ctr-col"><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span>${d.status==="archived"?`<button class="archive-del" type="button" title="Archiv-Eintrag entfernen (löscht keine echten Dateien)" data-name="${encodeURIComponent(d.name)}">&times;</button>`:""}</td>
+      <td class="num-col">${fmtDateCell(d)}</td>
       <td class="num-col">${d.nights? d.nights : '<span class="none">&ndash;</span>'}</td>
       <td class="num-col">${fmtHours(d)}</td>
       <td class="filters-txt">${d.filters||'<span class="none">&ndash;</span>'}</td>
@@ -15369,6 +15800,17 @@ document.querySelectorAll("thead th[data-key]").forEach(th=>{ th.addEventListene
 // funktioniert. Die Bildzelle wird zuerst geprueft und beendet den Handler
 // dann mit return, damit nicht zusaetzlich noch der Ordner geoeffnet wird.
 document.getElementById("rows").addEventListener("click", e=>{
+  const delBtn = e.target.closest("button.archive-del");
+  if(delBtn){
+    const name = decodeURIComponent(delBtn.dataset.name);
+    if(!confirm(`Archiv-Eintrag "${name}" wirklich entfernen? Das löscht keine echten Dateien, nur den Logbuch-Eintrag.`)) return;
+    delBtn.disabled = true;
+    window.pywebview.api.delete_archive_entry(name).then(result=>{
+      if(result.ok) location.reload();
+      else { alert(result.error || "Fehler beim Entfernen."); delBtn.disabled = false; }
+    });
+    return;
+  }
   const thumbCell = e.target.closest("td.img-col");
   if(thumbCell){
     const tr = thumbCell.closest("tr[data-path]");
@@ -15513,6 +15955,7 @@ function openSettings(){
     document.getElementById("cfgCalibWords").value = (cfg.calib_words || []).join(", ");
     mapToRows(cameraMapTable, cfg.camera_map, "Rohcode, z. B. 2600", "Anzeigename, z. B. ASI2600");
     mapToRows(filterMapTable, cfg.filter_map, "Kürzel, z. B. H", "Anzeigename, z. B. Ha");
+    updateCalibWarning();
     settingsOverlay.hidden = false;
   }).catch(err=>{
     settingsStatus.textContent = "Konnte Einstellungen nicht laden: " + err;
@@ -15521,6 +15964,37 @@ function openSettings(){
   });
 }
 function closeSettings(){ settingsOverlay.hidden = true; }
+
+// Warnt, wenn ein eingetragenes Kalibrier-Schluesselwort auch im Namen eines
+// Aufnahmeordners steckt (z. B. "lights"). Solche Ordner werden zwar seit
+// v1.9.2 trotzdem ausgewertet (siehe is_calib_name() im Python-Teil), das Wort
+// hat dort aber offensichtlich nicht die Wirkung, die sich der Nutzer davon
+// verspricht - deshalb hier der Hinweis, statt es stillschweigend zu ignorieren.
+function calibWordsHittingLightFolders(words){
+  const hits = [];
+  for(const w of words){
+    const needle = w.toLowerCase().trim();
+    // Sehr kurze Eingaben (1-2 Zeichen) wuerden fast immer irgendwo
+    // hineinpassen - dafuer keine Warnung, sonst blinkt sie beim Tippen.
+    if(needle.length < 3) continue;
+    if(LIGHT_FOLDER_NAMES.some(n => n.includes(needle))) hits.push(w.trim());
+  }
+  return hits;
+}
+
+function updateCalibWarning(){
+  const el = document.getElementById("cfgCalibWarn");
+  const words = document.getElementById("cfgCalibWords").value.split(",");
+  const hits = calibWordsHittingLightFolders(words);
+  if(!hits.length){ el.hidden = true; el.textContent = ""; return; }
+  const list = hits.map(w => `„${w}“`).join(", ");
+  el.textContent = `Hinweis: ${list} bezeichnet auch Aufnahmeordner (z. B. „lights“). `
+    + `Solche Ordner werden weiterhin ausgewertet - das Wort wirkt hier also nicht. `
+    + `Zum Ausblenden von Bearbeitungsordnern ist „Ausgeschlossene Ordner“ gedacht.`;
+  el.hidden = false;
+}
+
+document.getElementById("cfgCalibWords").addEventListener("input", updateCalibWarning);
 
 document.getElementById("settingsBtn").addEventListener("click", openSettings);
 document.getElementById("cancelSettingsBtn").addEventListener("click", closeSettings);
@@ -15617,6 +16091,8 @@ def build_dashboard_html(projects, root_folder):
     out = out.replace("%%LATITUDE%%", str(LATITUDE))
     out = out.replace("%%APP_VERSION%%", APP_VERSION)
     out = out.replace("%%DATA_JSON%%", json.dumps(projects, ensure_ascii=False))
+    out = out.replace("%%LIGHT_FOLDER_NAMES_JSON%%",
+                      json.dumps(sorted(LIGHT_FOLDER_NAMES), ensure_ascii=False))
     return out
 
 
@@ -15796,7 +16272,7 @@ def render_loading_page():
     return LOADING_HTML_TEMPLATE.replace("%%LOGO_B64%%", APP_LOGO_PNG_BASE64)
 
 
-def run_scan_and_build(out_dir, thumb_cache_path, object_cache_path, progress_cb=None):
+def run_scan_and_build(out_dir, thumb_cache_path, object_cache_path, archive_path, progress_cb=None):
     """Fuehrt einen kompletten Scan mit den aktuell gueltigen (globalen)
     Einstellungen durch, schreibt AstroLogbuch.html und gibt den fertigen
     HTML-Inhalt plus Projektanzahl zurueck. Wirft eine Exception weiter,
@@ -15816,7 +16292,8 @@ def run_scan_and_build(out_dir, thumb_cache_path, object_cache_path, progress_cb
         progress_cb(text=f"Scanne: {ROOT_FOLDER}")
     ref_year = date.today().year
     projects = scan_root(ROOT_FOLDER, ref_year, thumb_cache_path=thumb_cache_path,
-                          object_cache_path=object_cache_path, progress_cb=progress_cb)
+                          object_cache_path=object_cache_path, archive_path=archive_path,
+                          progress_cb=progress_cb)
     elapsed = time.time() - start
     done_line = f"{len(projects)} Projektordner gefunden ({elapsed:.1f} Sekunden)."
     print(done_line, flush=True)
@@ -15886,11 +16363,12 @@ class Api:
     im Log. Mit dem Unterstrich ueberspringt get_functions() dieses
     Attribut von vornherein (siehe "if name.startswith('_'): continue")."""
 
-    def __init__(self, state, config_path, thumb_cache_path, object_cache_path, out_dir):
+    def __init__(self, state, config_path, thumb_cache_path, object_cache_path, archive_path, out_dir):
         self.state = state
         self.config_path = config_path
         self.thumb_cache_path = thumb_cache_path
         self.object_cache_path = object_cache_path
+        self.archive_path = archive_path
         self.out_dir = out_dir
         self._window = None
 
@@ -15941,7 +16419,8 @@ class Api:
         apply_config(cfg)
         try:
             html_content, count = run_scan_and_build(
-                self.out_dir, self.thumb_cache_path, self.object_cache_path, progress_cb=progress_cb)
+                self.out_dir, self.thumb_cache_path, self.object_cache_path, self.archive_path,
+                progress_cb=progress_cb)
         except Exception as exc:
             traceback.print_exc()
             return {"ok": False, "error": f"Fehler beim Einlesen des Ordners: {exc}"}
@@ -15955,6 +16434,20 @@ class Api:
         einlesen, ohne dass sich an den Einstellungen etwas aendert
         (z. B. ueber einen "Aktualisieren"-Knopf im Dashboard)."""
         return self.apply_settings(load_config(self.config_path))
+
+    def delete_archive_entry(self, name):
+        """Entfernt einen archivierten Logbuch-Eintrag wieder (z. B. wenn
+        er aus Versehen entstanden ist), siehe scan_root()/Abschnitt
+        Archiv. Loescht ausschliesslich den Eintrag in
+        AstroLogbuch_archive.json, NIE echte Dateien auf der Platte -
+        betrifft ohnehin nur Projekte, deren urspruenglicher Ordner
+        bereits nicht mehr existiert. Anschliessend wie gewohnt neu
+        einlesen, damit die Tabelle sofort aktuell ist."""
+        archive = load_archive(self.archive_path)
+        if name in archive:
+            del archive[name]
+            save_archive(self.archive_path, archive)
+        return self.rescan()
 
     def list_preview_candidates(self, project_path):
         """Fuer das Vorschaubild-Auswahlfenster (Klick auf das Vorschaubild
@@ -16023,7 +16516,7 @@ class Api:
         return self.apply_settings(cfg)
 
 
-def try_launch_webview(config, config_path, thumb_cache_path, object_cache_path, out_dir):
+def try_launch_webview(config, config_path, thumb_cache_path, object_cache_path, archive_path, out_dir):
     """Baut das App-Fenster auf und blockiert (wie server.serve_forever()
     vorher), bis das Fenster geschlossen wird. Gibt True zurueck, wenn das
     grundsaetzlich funktioniert hat (auch wenn z. B. der Scan selbst einen
@@ -16053,7 +16546,7 @@ def try_launch_webview(config, config_path, thumb_cache_path, object_cache_path,
     url = f"http://127.0.0.1:{port}/"
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    api = Api(state, config_path, thumb_cache_path, object_cache_path, out_dir)
+    api = Api(state, config_path, thumb_cache_path, object_cache_path, archive_path, out_dir)
 
     def progress_cb(current=None, total=None, text=None):
         """Aktualisiert state["progress"], das /progress fuer den
@@ -16187,7 +16680,7 @@ def try_launch_webview(config, config_path, thumb_cache_path, object_cache_path,
 # Browser-Modus (Fallback, falls pywebview fehlt oder nicht funktioniert)
 # ======================================================================
 
-def run_legacy_browser_mode(out_dir, thumb_cache_path, object_cache_path):
+def run_legacy_browser_mode(out_dir, thumb_cache_path, object_cache_path, archive_path):
     if not ROOT_FOLDER or not os.path.isdir(ROOT_FOLDER):
         print(f"FEHLER: Ordner nicht gefunden: {ROOT_FOLDER!r}")
         print("Bitte den Ordner in den Einstellungen (App-Ansicht) waehlen, oder")
@@ -16196,7 +16689,7 @@ def run_legacy_browser_mode(out_dir, thumb_cache_path, object_cache_path):
         return
 
     try:
-        html_content, count = run_scan_and_build(out_dir, thumb_cache_path, object_cache_path)
+        html_content, count = run_scan_and_build(out_dir, thumb_cache_path, object_cache_path, archive_path)
     except Exception:
         traceback.print_exc()
         input("\nEin Fehler ist beim Einlesen aufgetreten (siehe oben). Enter zum Beenden...")
@@ -16249,6 +16742,7 @@ def main():
     config_path = os.path.join(out_dir, CONFIG_FILENAME)
     thumb_cache_path = os.path.join(out_dir, THUMB_CACHE_FILENAME)
     object_cache_path = os.path.join(out_dir, OBJECT_CACHE_FILENAME)
+    archive_path = os.path.join(out_dir, ARCHIVE_FILENAME)
 
     config = load_config(config_path)
     apply_config(config)
@@ -16257,8 +16751,8 @@ def main():
         print("Hinweis: Paket 'Pillow' nicht gefunden, Vorschaubilder werden übersprungen.", flush=True)
         print("Für Vorschaubilder einmalig: pip install pillow\n", flush=True)
 
-    if not try_launch_webview(config, config_path, thumb_cache_path, object_cache_path, out_dir):
-        run_legacy_browser_mode(out_dir, thumb_cache_path, object_cache_path)
+    if not try_launch_webview(config, config_path, thumb_cache_path, object_cache_path, archive_path, out_dir):
+        run_legacy_browser_mode(out_dir, thumb_cache_path, object_cache_path, archive_path)
 
 
 if __name__ == "__main__":

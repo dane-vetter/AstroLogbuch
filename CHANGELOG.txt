@@ -4,6 +4,128 @@ CHANGELOG - AstroLogbuch
 Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
 oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
 
+v1.9.2 - 2026-09-18
+--------------------
+- Neu: Ordner mit aussortierten Aufnahmen werden uebersprungen. Wer
+  misslungene Aufnahmen in einen Unterordner "falsch", "Ausschuss",
+  "unscharf", "reject" o. ae. verschiebt, hat sie bewusst verworfen - kein
+  Stackprogramm wuerde sie verwenden, also zaehlen sie jetzt auch nicht
+  mehr in Belichtungszeit und Aufnahmezahl (ihr Speicherplatz taucht in
+  der Datenmenge weiter auf, wie bei Kalibrierordnern). Erkannt wird nur
+  der GANZE Ordnername, nie ein Teilstring: Ein Projektordner "M44 ...
+  klein loeschen" darf dadurch natuerlich nicht verschwinden. Siehe
+  REJECT_FOLDER_NAMES/is_reject_name(). Von einem Nutzer per Mail
+  gemeldet.
+- Bugfix: "In Arbeit" statt "Nur Rohdaten", wenn Zwischenergebnisse der
+  Bildbearbeitung vorliegen. Bisher galt ein Projekt nur als begonnen,
+  wenn ein fertiges BILD (jpg/png/tif/psd) darin lag. Siril, DSS und
+  PixInsight legen ihre Ergebnisse aber als .fit/.fits ab
+  ("result.fit", "Autosave DSS.fit", "starless_result.fit") - ein
+  komplett durchgestacktes und bearbeitetes Projekt stand deshalb
+  faelschlich unter "Nur Rohdaten". Solche Dateien (siehe
+  PROCESSED_NAME_WORDS) und ein vorhandener Stack-Ordner zaehlen jetzt
+  als "in Arbeit", und sie werden auch nicht mehr als "Rohaufnahmen ohne
+  auswertbares Namensschema" mitgezaehlt - sie sind keine Aufnahmen. Von
+  einem Nutzer per Mail gemeldet.
+- Neu: Filter aus dem Ordnernamen. Ein Filterkuerzel im Dateinamen
+  schreibt nur die Aufnahmesoftware, und die kennt nur Filter, die sie
+  selbst schalten kann - also ein Filterrad. Ein von Hand eingeschraubter
+  Filter (typisch bei DSLR/Systemkameras) hinterlaesst nirgends eine
+  Spur, auch nicht im FITS-Header; dokumentiert wird er im Ordnernamen
+  ("... Askar 697mm HA Filter 15.09.2026"). Nennt der Dateiname keinen
+  Filter, wird deshalb jetzt ersatzweise der Ordnername ausgewertet
+  (siehe filter_from_folder_name()), bei Unterordnern gewinnt der
+  naechstgelegene - ein Projekt mit getrennten "Ha"- und
+  "OIII"-Unterordnern wird also korrekt aufgeteilt. In der Tabelle steht
+  dann "Ha 28x360s (laut Ordnername)", damit die Herkunft der Angabe
+  sichtbar bleibt. Verglichen wird nur gegen ganze Woerter ab zwei
+  Zeichen, sonst wuerde "HA" mitten in "BienenstockHAufen" treffen.
+  Eigene Kuerzel lassen sich unter "Filter-Bezeichnungen" ergaenzen.
+  Ein so erkannter Filter zaehlt bewusst NICHT als Hinweis auf eine
+  Mono-Kamera (das tut nur ein Filter aus dem Dateinamen, denn ein
+  Filterrad betreibt man an einer Mono-Kamera) - sonst waere z. B. eine
+  Sony A7R III mit Ha-Filter als Mono-Kamera einsortiert worden. Von
+  einem Nutzer per Mail gemeldet.
+- Neu: Light-Dateinamen werden jetzt feldweise erkannt, wenn keines der
+  beiden festen Namensmuster passt (siehe match_light_name() und
+  parse_light_fields()). Das ASIAIR schiebt je nach Version und Zubehoer
+  weitere Felder VOR die Belichtung (z. B. den Rotatorwinkel:
+  "Light_M 44_270deg_30.0s_Bin1_..."), bei Auto-ISO steht im ISO-Feld gar
+  keine Zahl ("ISOAuto ISO"), aeltere Aufnahmen schreiben das Binning als
+  "1x1" statt "Bin1", manchmal fehlt das Zielfeld ganz
+  ("Light_300.0s_Bin1_2400MC_gain158_...") und manchmal das ISO-/Gain-Feld
+  ("Light_NGC 6960_300.0s_Bin1_20260813-225438_273deg_sony_0001.fit").
+  Solche Aufnahmen zaehlten bisher gar nicht mit. Verlangt werden nur noch
+  "Light" am Anfang, eine Belichtungsangabe, ein Zeitstempel und eine
+  laufende Nummer am Ende - Reihenfolge und Zusatzfelder dazwischen sind
+  egal; Zwischendateien der Bildbearbeitung ("pp_light_00001.fit") fallen
+  weiterhin durch, weil ihnen Zeitstempel und Belichtung fehlen. Die
+  bisherigen Muster laufen unveraendert zuerst, erkannte Aufnahmen
+  aendern sich also nicht. Teilweise von einem Nutzer per Mail gemeldet;
+  im Archiv des Autors kamen dadurch 100 bisher nicht gezaehlte
+  Aufnahmen aus 2020 und 2024 hinzu (NGC 7023: 24,5 h -> 37,4 h).
+- Bugfix: Ein Kalibrier-Schluesselwort, das auch auf den AUFNAHMEordner
+  passt (z. B. "lights"), hat die komplette Auswertung stillgelegt: Der
+  Aufnahmeordner wurde wie ein Flats/Darks-Ordner uebersprungen, und im
+  Dashboard stand bei jedem Projekt nur noch "... Rohaufnahmen ohne
+  auswertbares Namensschema", ohne Kamera, ohne Stunden und mit 1 Nacht.
+  Die Ursache war von aussen praktisch nicht zu erraten. Ordner, deren
+  Name fuer sich genommen den Aufnahmeordner bezeichnet ("light",
+  "lights", "Light Frames", "Aufnahmen", ...), gelten jetzt nie als
+  Kalibrierordner (siehe is_calib_name()). Zusaetzlich gilt: Eine Datei,
+  die dem Light-Namensschema entspricht, wird nie ueber ein
+  Kalibrier-Schluesselwort aussortiert - sonst hat schon das Wort "light"
+  saemtliche "Light_...".fit-Dateien verschwinden lassen. Darks und Flats
+  bleiben davon unberuehrt, sie heissen nie "Light_...". Von einem Nutzer
+  per Mail gemeldet.
+- Neu: Der Einstellungsdialog weist direkt unter dem Feld darauf hin,
+  wenn ein eingetragenes Kalibrier-Schluesselwort auf Aufnahmeordner
+  passt und deshalb ignoriert wird - mit dem Verweis auf
+  "Ausgeschlossene Ordner" als das eigentlich gemeinte Feld.
+- Bugfix: Die Objektsuche verglich stur Zeichen fuer Zeichen. Wer "M31"
+  eintippte, fand seinen Ordner "M 31 20.07.26" nicht, weil dort ein
+  Leerzeichen steht. Gesucht wird jetzt zusaetzlich ohne Leer- und
+  Trennzeichen ("m31" findet "M 31", "sh2131" findet "SH2-131"), und der
+  Gruppenname (Sammelordner) wird mitdurchsucht, sodass sich mit der
+  Suche auch schnell eine Montierung eingrenzen laesst. Von einem Nutzer
+  per Mail gemeldet.
+- Bugfix: Loescht ein Nutzer sein eigenes Namenskuerzel nachtraeglich aus
+  dem ASIAIR-Dateinamen, bleibt teils ein doppelter Unterstrich uebrig
+  ("..._A7III_TeS__0003.fit"). Solche Dateien fielen komplett durch die
+  Erkennung; leere Zusatzfelder sind jetzt erlaubt.
+- Bugfix/Neu: "Letzte Bearbeitung" nahm bisher das Dateisystem-mtime
+  IRGENDEINER Datei im Projekt, auch der Rohaufnahmen - das springt bei
+  jedem Kopieren/Verschieben/Sichern der Lights faelschlich auf "jetzt"
+  (beobachtet nach einer Uebertragung per WeTransfer). "Bearbeitung" und
+  "Aufnahme" sind ausserdem zwei verschiedene Dinge, die nicht in einem
+  Wert vermischt gehoeren. Jetzt getrennt: "Letzte Bearbeitung" nimmt nur
+  noch das mtime von Verarbeitungs-/Ergebnisdateien (Stack, fertiges
+  Bild, ...), das aus den Light-Dateinamen geparste Aufnahmedatum steht
+  als zweite Zeile in derselben Spalte daneben (siehe capture_date()/
+  edit_date()). Von einem Nutzer per Mail gemeldet, Loesung gemeinsam
+  entwickelt.
+- Neu: Sortier-Symbol in der Kopfzeile. Jede Spalte war zwar schon immer
+  klickbar sortierbar, aber ohne jede sichtbare Rueckmeldung - man sah
+  weder, DASS sortiert wird, noch in welche Richtung, und erst recht
+  nicht VOR dem ersten Klick, dass eine Spalte ueberhaupt sortierbar ist.
+  Jetzt zeigt jede sortierbare Spalte dauerhaft ein dezentes Symbol, die
+  aktive Sortierung zusaetzlich einen deutlichen Pfeil (rauf/runter) in
+  der tatsaechlichen Richtung. Von einem Nutzer per Mail gemeldet.
+- Umbenannt: Spalte "Optimales Fenster" heisst jetzt "Beobachtungsfenster"
+  (klarerer Name fuer denselben Zweck: beste Zeit im Jahr, um das Objekt
+  zu fotografieren - bei allen Status weiterhin sichtbar).
+- Neu: Archiv fuer fertige Projekte. "Fertig"-Projekte werden jetzt
+  zusaetzlich dauerhaft gesichert (Name, Naechte, Stunden, Filter/Kamera,
+  Vorschaubild, Aufnahme- und Bearbeitungsdatum), unabhaengig vom Ordner
+  selbst.
+  Wird der Rohdaten-Ordner spaeter geloescht (begrenzter Speicherplatz),
+  taucht das Projekt weiterhin als "Archiviert" im Logbuch auf, nur ohne
+  "Ordner oeffnen". Ein archivierter Eintrag laesst sich per Klick auf
+  das "x" neben dem Status-Badge wieder manuell entfernen (loescht nur
+  den Logbuch-Eintrag, nie echte Dateien). Von einem Nutzer per Mail
+  vorgeschlagen ("AstroLogbuch soll ein echtes Logbuch sein, keine reine
+  Ansicht des aktuellen Datei-Bestands").
+
 v1.9.1 - 2026-09-16
 --------------------
 - Bugfix: Bei der in v1.9.0 neuen Kamera-Erkennung fuer DSLR/System-

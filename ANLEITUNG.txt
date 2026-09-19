@@ -79,8 +79,12 @@ Status unklar) sind anklickbar und filtern die Tabelle direkt auf den
 jeweiligen Status. Die Tabelle selbst laesst sich durch Klick auf einen
 Spaltenkopf sortieren (nochmaliger Klick kehrt die Richtung um), unter
 anderem nach der Spalte "Letzte Bearbeitung" (juengstes Aenderungsdatum
-unter allen Dateien eines Projekts) - das ist auch die Voreinstellung
-beim Start.
+unter den Verarbeitungs-/Ergebnisdateien eines Projekts, ersatzweise
+irgendeiner Datei, falls es noch keine gibt; das Aufnahmedatum aus den
+Light-Dateinamen steht als zweite Zeile in derselben Spalte) - das ist
+auch die Voreinstellung beim Start. Jede sortierbare Spalte zeigt dauerhaft
+ein kleines Sortier-Symbol, die aktive Sortierung zusaetzlich einen
+Pfeil in der tatsaechlichen Richtung.
 
 Im Panel "Jetzt gut zu erreichen" laesst sich ueber die Monatsleiste durch
 alle zwoelf Monate blaettern - ein Klick auf einen Monat zeigt, welche
@@ -183,7 +187,12 @@ wo das Zahnrad-Menue nicht bedienbar ist, siehe oben). Sie enthaelt:
 - camera_map und filter_map - deine eigenen Kamera- bzw.
   Filterbezeichnungen, siehe "Fuer andere Nutzer" weiter unten.
 - calib_words - Woerter, die einen Ordner als Kalibrierordner
-  (Flats/Darks/Bias) erkennen lassen.
+  (Flats/Darks/Bias) erkennen lassen. Achtung: Der Vergleich ist ein
+  Teilstring-Vergleich, "dark" erkennt also auch "Darks 2026". Woerter,
+  die auf Aufnahmeordner passen ("light", "lights", "aufnahmen", ...),
+  werden absichtlich ignoriert, damit ein solcher Eintrag nicht
+  versehentlich die ganze Auswertung stilllegt; der Einstellungsdialog
+  weist darauf hin.
 - show_thumbnails und online_lookup_enabled - je ein An/Aus-Schalter.
 
 Fehlt die Datei ganz (z. B. bei einer komplett neuen Installation ohne
@@ -226,7 +235,10 @@ im Skript fest hinterlegt zu sein:
   werden auf sprechende Namen abgebildet (z. B. "H" -> "Ha"). Die
   Werkseinstellung deckt die bei ASIAIR/NINA ueblichen Kuerzel ab
   (L/R/G/B/H/O/S/LP/CLS/Duo), laesst sich aber frei ergaenzen oder
-  ueberschreiben.
+  ueberschreiben. Dieselben Kuerzel werden auch im ORDNERnamen gesucht,
+  falls der Dateiname keinen Filter nennt (siehe "Filter aus dem
+  Ordnernamen" weiter unten) - ein eigener Eintrag wirkt also an beiden
+  Stellen.
 - Ausgeschlossene Ordner und Kalibrier-Schluesselwoerter sind ebenfalls
   frei anpassbar, falls jemand andere Ordnerbenennungen verwendet (z. B.
   andere Woerter als "dark"/"flat"/"bias" fuer Kalibrieraufnahmen).
@@ -280,6 +292,33 @@ Namen traegt, wird aus der tatsaechlichen Filternutzung geschaetzt (mit
 Filter -> wahrscheinlich Mono, ohne Filter -> wahrscheinlich Farbe/OSC)
 und das Ergebnis als eigene Zeile mit dem Zusatz "vermutlich" ausgewiesen,
 statt es mit den sicheren Werten zu vermischen.
+
+
+FILTER AUS DEM ORDNERNAMEN
+------------------------------
+
+Ein Filterkuerzel im Dateinamen schreibt nur die Aufnahmesoftware, und die
+kennt nur Filter, die sie selbst schalten kann - also ein Filterrad. Wer
+einen Filter von Hand vor oder in die Kamera schraubt (typisch bei
+DSLR/Systemkameras), hat davon in den Dateien keine Spur, auch nicht im
+FITS-Header: Die Software weiss von diesem Filter nichts. Dokumentiert
+wird er dann ueblicherweise im Ordnernamen.
+
+Nennt der Dateiname keinen Filter, wird deshalb der Ordnername
+ausgewertet: "NGC 6960 Askar 697mm HA Filter 15.09.2026" ergibt "Ha".
+Liegen Unterordner je Filter vor, gewinnt der naechstgelegene Ordner, ein
+Projekt mit "Ha"- und "OIII"-Unterordnern wird also korrekt aufgeteilt.
+In der Tabelle steht in diesem Fall "Ha 28x360s (laut Ordnername)", damit
+erkennbar bleibt, dass die Angabe aus dem Ordnernamen stammt und nicht aus
+der Aufnahmesoftware.
+
+Gesucht werden nur ganze Woerter ab zwei Zeichen Laenge - sonst wuerde
+"HA" mitten in "BienenstockHAufen" treffen und einbuchstabige Kuerzel wie
+"L" oder "S" fortlaufend zufaellig. Was im Dateinamen steht, hat immer
+Vorrang. Ausserdem gilt ein so erkannter Filter NICHT als Hinweis auf eine
+Mono-Kamera (siehe Abschnitt zuvor): Ein Filterrad betreibt man an einer
+Mono-Kamera, einen eingeschraubten Filter dagegen gerade an einer
+Farbkamera.
 
 WOHER DIE KOORDINATEN FUER DAS OPTIMALE FENSTER KOMMEN
 ----------------------------------------------------------
@@ -417,10 +456,20 @@ WIE DER STATUS ERMITTELT WIRD (feste Regeln, keine KI-Einschaetzung)
 1. "done" oder "fertig" im Ordnernamen -> Fertig
 2. sonst fertige Bilddatei (jpg/png/tif/psd/mp4) im Ordner oder in einem
    Stack-Unterordner -> In Arbeit
-3. sonst ein Monatsname im Ordnernamen (z. B. "August") -> Geplant
-4. sonst nur Rohaufnahmen ohne Stack-Ordner -> Nur Rohdaten
-5. sonst ein Stack-Ordner vorhanden, aber kein Endbild -> Unklar
+3. sonst ein Zwischenergebnis der Bildbearbeitung oder ein Stack-Ordner
+   -> In Arbeit. Gemeint sind Dateien, die Siril, DSS, PixInsight & Co.
+   als .fit/.fits ablegen: "result...", "Autosave...", "..._stacked",
+   "starless_...", "starmask_...", "integration...", "final...",
+   "drizzle...". Wer stackt und Sterne entfernt, hat das Projekt
+   eindeutig in Arbeit, auch wenn noch kein jpg/png exportiert ist.
+4. sonst ein Monatsname im Ordnernamen (z. B. "August") -> Geplant
+5. sonst nur Rohaufnahmen -> Nur Rohdaten
 6. sonst (fast keine Dateien) -> Kaum begonnen
+
+Der Unterschied zwischen In Arbeit und Nur Rohdaten ist also genau
+dieser: Liegt im Projekt irgendein Ergebnis der Bearbeitung (fertiges
+Bild, Stack, Sternmaske, Autosave), heisst es In Arbeit. Liegen dort nur
+die Aufnahmen selbst, heisst es Nur Rohdaten.
 
 Fertig wird ausschliesslich ueber das "done"- bzw. "fertig"-Tag im
 Ordnernamen vergeben, nie automatisch aus einer vorhandenen Bilddatei
@@ -460,8 +509,11 @@ GESCHWINDIGKEIT
 ------------------
 
 Kalibrierordner (alles mit "flat", "dark", "bias", "offset", "dunkel" oder
-"darkflat" im Ordnernamen) werden fuer die eigentliche Auswertung (Filter,
-Kamera, Belichtungszeit) komplett uebersprungen, statt jede einzelne
+"darkflat" im Ordnernamen - ausser Aufnahmeordner wie "lights", siehe
+"calib_words" weiter oben) sowie Ordner mit aussortierten Aufnahmen
+("falsch", "Ausschuss", "unscharf", "reject", "Papierkorb" und aehnliche,
+immer als ganzer Ordnername) werden fuer die eigentliche Auswertung
+(Filter, Kamera, Belichtungszeit) komplett uebersprungen, statt jede einzelne
 Datei darin einzulesen und dann zu verwerfen; ihre Dateigroesse wird
 trotzdem noch schnell aufsummiert, damit sie in der Datenmenge auftaucht.
 Ebenso wird fuer die Bildvorschau nicht mehr jede Kandidatendatei einzeln
