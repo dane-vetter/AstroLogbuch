@@ -4,6 +4,79 @@ CHANGELOG - AstroLogbuch
 Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
 oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
 
+v1.9.3 - 2026-09-19
+--------------------
+- Neu: XISF-Dateien (PixInsight) werden jetzt als Rohaufnahmen erkannt.
+  Wer seine kalibrierten Subframes z. B. per SubframeSelector bewertet
+  und als .xisf statt .fit speichert, bekam bisher gar keine Auswertung
+  (Filter/Kamera/Stunden fehlten komplett). Die Namenserkennung war
+  bereits endungsunabhaengig, es fehlte nur der Eintrag in der Liste der
+  erkannten Endungen. Im Forum gemeldet.
+- Neu: Rueckfall auf Stacked-Ausgabedateien von Smart-Teleskopen (z. B.
+  "Stacked_109_NGC 6960_30.0s_LP_20260908-020725.fit" oder
+  "DSO_Stacked_1160_NGC 6960_10.0s_20260906_195744.fit", siehe
+  parse_stacked_name()). Loescht ein Nutzer seine Rohaufnahmen nach dem
+  Stacken (z. B. um Platz zu sparen - genau der Fall, fuer den das
+  Archiv-Feature gedacht ist), blieben Filter/Kamera/Stunden bisher leer,
+  obwohl die Angaben (Anzahl Subs, Belichtung pro Sub, Filter) direkt im
+  Dateinamen der Stacked-Datei stehen. Wird jetzt ausgewertet - aber NUR,
+  wenn das Projekt am Ende ueberhaupt keine Belichtungszeit aus echten
+  Rohaufnahmen hat, sonst wuerde die Gesamtbelichtungszeit doppelt
+  gezaehlt (einmal aus den Rohaufnahmen, einmal aus dem Stack). Von einem
+  Nutzer per Mail gemeldet.
+- Neu: Kategorie "Sonne" fuer Solar-Aufnahmen (analog zu "Mond"/"Planet"),
+  bisher unter "Sonstiges" mitgelaufen. Von einem Nutzer per Mail
+  gemeldet.
+- Neu: Spalte zeigt bei der Kategorie "Mond" jetzt naechsten Vollmond und
+  Neumond (naeherungsweise ueber die synodische Periode berechnet) statt
+  eines leeren Feldes - das bisherige Beobachtungsfenster-Verfahren
+  (Opposition) passt fachlich nicht auf den Mond. Von einem Nutzer per
+  Mail vorgeschlagen.
+- Aenderung: Beobachtungsfenster von +/-90 auf +/-45 Tage um den
+  Oppositionstermin verkuerzt (6 statt 3 Monate Gesamtspanne). Beim Klick
+  auf einen Monat erschienen bisher auch Objekte, deren Hoehepunkt bis zu
+  3 Monate entfernt lag. Von einem Nutzer per Mail vorgeschlagen.
+- Bugfix: Sortier-Symbol bei nicht aktiven Spalten war zu unauffaellig
+  (gedimmt) - ein Nutzer musste genau hinsehen, um es zu erkennen. Jetzt
+  in voller Deckkraft wie die aktive Sortierung, die sich stattdessen
+  per Textfarbe und Fettschrift abhebt.
+- Bugfix: Planeten und Mond zeigten ein Beobachtungsfenster ohne
+  Aussagekraft (dieselbe Oppositions-Rechnung wie bei Deep-Sky-Objekten,
+  obwohl beide staendig durch den Tierkreis wandern). Zeigen jetzt wie
+  Kometen kein Fenster mehr. Von einem Nutzer per Mail gemeldet.
+- Neu: Erste Unterstuetzung fuer Smart-Teleskope (z. B. ZWO Seestar).
+  Deren Light-Dateinamen haben weder Bin- noch ISO-/Gain-Feld, dafuer
+  einen Filter-Hinweis direkt zwischen Belichtung und Zeitstempel (z. B.
+  "Light_NGC 6960_10.0s_LP_20260906-035351_1153.fit") - dieses Feld ging
+  bisher komplett verloren (weder als Filter noch als Kamera erkannt).
+  Wird jetzt als letzter Rueckfall ausgewertet. Ausserdem: die vom Geraet
+  automatisch angelegten Nicht-Deep-Sky-Ordner ("Scenery_video",
+  "Solar_Video", "Solar_photo", "MilkyWay...") laufen nicht mehr unter
+  der Kategorie "Nebel/Deep-Sky", sondern unter "Sonstiges". Von einem
+  Nutzer per Mail gemeldet (noch offen: die Kamera selbst automatisch als
+  "Seestar" zu beschriften liess sich ohne ein zuverlaessigeres Merkmal
+  nicht risikofrei umsetzen, siehe Mail an den Nutzer).
+- Bugfix: Das Sortier-Symbol bei nicht aktiven Spalten (Unicode "⇅")
+  wird nicht von jeder Schriftart abgedeckt und fiel bei einem Nutzer auf
+  ein unklares Ersatzzeichen zurueck. Verwendet jetzt dasselbe Dreieck-
+  Zeichen wie die aktive Sortierung, nur gedimmt.
+- Bugfix: Caldwell-Katalognummern in der Kurzform ("C34", "C 20") wurden
+  bisher gar nicht erkannt, nur das ausgeschriebene Wort "Caldwell" - und
+  selbst dann fand weder der eingebaute Katalog noch die Online-Suche
+  (Sesame kennt "Caldwell" als Bezeichnung nicht, getestet) eine
+  Koordinate. Caldwell-Nummern werden jetzt auf ihre NGC/IC/Sh2-
+  Entsprechung umgerechnet (siehe CALDWELL_TO_KEY, Quelle: Wikipedia
+  "Caldwell catalogue"), worueber der eingebaute Katalog sie zuverlaessig
+  findet. Von einem Nutzer per Mail gemeldet.
+- Bugfix: Wurde eine Katalognummer erkannt (NGC/IC/M/Sh2/LBN), aber war
+  nicht im eingebauten Katalog (deckt Sh2 z. B. nur mit einem einzigen
+  zufaelligen Treffer ab), ging bisher der GANZE unaufgeraeumte
+  Ordnername als Online-Suchanfrage raus (z. B. "SH2-131
+  Elefantenruesselnebel 13.07.2026") - das scheitert bei Sesame fast
+  immer. Es wird jetzt stattdessen eine saubere Katalogbezeichnung
+  geschickt (z. B. "Sh2-131"), live gegen Sesame getestet und
+  funktioniert. Von einem Nutzer per Mail gemeldet.
+
 v1.9.2 - 2026-09-18
 --------------------
 - Neu: Ordner mit aussortierten Aufnahmen werden uebersprungen. Wer

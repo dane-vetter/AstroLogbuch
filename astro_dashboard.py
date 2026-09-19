@@ -148,7 +148,7 @@ ALWAYS_EXCLUDED_FOLDER_NAMES = {"astrologbuch"}
 # Bei jeder inhaltlichen Aenderung erhoehen und einen Eintrag in
 # CHANGELOG.txt ergaenzen (siehe dort). Wird im Dashboard (Kopfzeile
 # rechts) angezeigt, damit erkennbar ist, welcher Stand gerade laeuft.
-APP_VERSION = "1.9.2"
+APP_VERSION = "1.9.3"
 
 CONFIG_FILENAME = "AstroLogbuch_config.json"
 ARCHIVE_FILENAME = "AstroLogbuch_archive.json"
@@ -13363,16 +13363,22 @@ BIG_CATALOG = _load_big_catalog(BIG_CATALOG_BLOB)
 # sondern "keine weitere Ziffer" (?!\d): ein Unterstrich zaehlt fuer \b als
 # Wortzeichen, ein reines \b wuerde also z. B. bei zusammengesetzten Namen wie
 # "NGC5363_5317_5360" nach der ersten Nummer nicht mehr zutreffen, weil davor
-# und danach je ein Wortzeichen (Ziffer/Unterstrich) steht. Caldwell bewusst
-# nur ausgeschrieben, da ein blosses "C" + Zahl mit Kometen-Bezeichnungen wie
-# "C/2020" kollidieren wuerde.
+# und danach je ein Wortzeichen (Ziffer/Unterstrich) steht. Caldwell akzeptiert
+# sowohl die Kurzform "C34" als auch "Caldwell 34" - eine anfaengliche Sorge,
+# dass ein blosses "C" + Zahl mit Kometen-Bezeichnungen wie "C/2020" oder
+# "C2023" kollidieren koennte, greift dank des 1-3-stelligen Zahlen-Deckels
+# unten NICHT: Kometen-Jahreszahlen sind immer 4-stellig, "(?!\d)" verhindert
+# also jeden Treffer darin (getestet gegen "C2023 A3 Tsuchinshan-ATLAS",
+# "Komet C-2017 K2", "Komet C2023 P1 Nishimura" - keine Kollision). Von einem
+# Nutzer per Mail gemeldet (seine Caldwell-Ordner "C 20"/"C34" fanden bisher
+# keine Koordinaten).
 CATALOG_NUM_PATTERNS = [
     (re.compile(r'\bngc\s*0*(\d{1,4}[a-z]?)(?!\d)', re.IGNORECASE), 'ngc'),
     (re.compile(r'\bic\s*0*(\d{1,4}[a-z]?)(?!\d)', re.IGNORECASE), 'ic'),
     (re.compile(r'\bm\s*0*(\d{1,3})(?!\d)', re.IGNORECASE), 'm'),
     (re.compile(r'\bsh\s*2[\s\-_]*0*(\d{1,3})(?!\d)', re.IGNORECASE), 'sh2'),
     (re.compile(r'\blbn\s*0*(\d{1,4})(?!\d)', re.IGNORECASE), 'lbn'),
-    (re.compile(r'\bcaldwell\s*0*(\d{1,3})(?!\d)', re.IGNORECASE), 'c'),
+    (re.compile(r'\b(?:caldwell|c)\s*0*(\d{1,3})(?!\d)', re.IGNORECASE), 'c'),
 ]
 
 MONTH_NAMES = {
@@ -13393,7 +13399,13 @@ MONTH_NAMES = {
 MONTHS_DE_SHORT = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"]
 
 FINAL_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".psd", ".psb", ".mp4"}
-RAW_EXT = {".fit", ".fits", ".fts", ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf"}
+# ".xisf" (PixInsight) bewusst bei RAW_EXT, nicht FINAL_EXT: Wer seine
+# kalibrierten Subframes z. B. per SubframeSelector bewertet/sortiert und
+# als .xisf statt .fit speichert, hat weiterhin einzelne Rohaufnahmen, kein
+# fertiges/gestacktes Bild - die Namenserkennung (match_light_name()) ist
+# bereits extensions-unabhaengig (".\w+$"), erkennt "Light_..." also auch
+# mit dieser Endung. Von einem Nutzer im Forum gemeldet.
+RAW_EXT = {".fit", ".fits", ".fts", ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".xisf"}
 # CALIB_WORDS ist eine Einstellung (siehe apply_config()); der Wert hier ist
 # nur die Vorgabe, falls apply_config() aus irgendeinem Grund uebersprungen
 # wuerde. STACK_WORDS ist bewusst kein Einstellungsfeld (rein technisches
@@ -13589,22 +13601,32 @@ def parse_light_fields(fn):
         return None
     head = tokens[1:ts_idx]          # zwischen "Light" und Zeitstempel
     tail = tokens[ts_idx + 1:-1]     # zwischen Zeitstempel und laufender Nummer
-    exp_match = next((_EXP_FIELD_RE.match(t) for t in head
-                      if _EXP_FIELD_RE.match(t)), None)
-    if exp_match is None:
+    exp_idx = next((i for i, t in enumerate(head) if _EXP_FIELD_RE.match(t)), None)
+    if exp_idx is None:
         return None
+    exp_match = _EXP_FIELD_RE.match(head[exp_idx])
     iso_idx = next((i for i, t in enumerate(head) if _ISO_GAIN_FIELD_RE.match(t)), None)
 
-    # Kamera: wie beim DSLR-Muster zuerst hinter dem Zeitstempel suchen.
-    # Steht dort nichts (reines ASI-Schema mit zusaetzlichen Feldern vorne),
-    # das Feld direkt VOR dem ISO-/Gain-Feld nehmen - dort steht beim ASI
-    # die Kamera (ggf. samt Filter, "2600MM_Ha"), sofern es nicht selbst
-    # ein technisches Feld wie "Bin1" ist.
+    # Kamera/Filter: wie beim DSLR-Muster zuerst hinter dem Zeitstempel
+    # suchen. Steht dort nichts (reines ASI-Schema mit zusaetzlichen
+    # Feldern vorne), das Feld direkt VOR dem ISO-/Gain-Feld nehmen - dort
+    # steht beim ASI die Kamera (ggf. samt Filter, "2600MM_Ha"), sofern es
+    # nicht selbst ein technisches Feld wie "Bin1" ist.
     mid = camera_from_extra_fields("_".join(tail))
     if not mid and iso_idx:
         before = head[iso_idx - 1]
         if not _EXTRA_TECH_FIELD_RE.match(before) and not _EXP_FIELD_RE.match(before):
             mid = before
+    # Manche Smart-Teleskope (z. B. ZWO Seestar: "Light_NGC 6960_10.0s_LP_
+    # 20260906-035351_1153.fit") haben weder ein Bin- noch ein ISO-/Gain-
+    # Feld ueberhaupt - dort steht zwischen Belichtung und Zeitstempel
+    # direkt der Filter-/Kamera-Hinweis ("LP"), bisher komplett verloren.
+    # Nur als letzter Rueckfall (mid weiterhin leer), damit normale
+    # ASI-Aufnahmen mit zusaetzlichen Feldern VOR der Belichtung (Rotator-
+    # winkel etc., siehe oben) unveraendert bleiben. Von einem Nutzer per
+    # Mail gemeldet.
+    if not mid:
+        mid = camera_from_extra_fields("_".join(head[exp_idx + 1:]))
     return float(exp_match.group("exp")), tokens[ts_idx][:8], mid
 
 
@@ -13626,6 +13648,63 @@ def match_light_name(fn):
         return (float(m.group("exp")), m.group("ts")[:8],
                 camera_from_extra_fields(m.group("extra")))
     return parse_light_fields(fn)
+
+
+_UNDERSCORE_DATE_RE = re.compile(r'^\d{8}$')
+_UNDERSCORE_TIME_RE = re.compile(r'^\d{6}$')
+
+
+def parse_stacked_name(fn):
+    """Erkennt SeeStar-typische Stacked-Ausgabedateien, z. B.
+    "Stacked_109_NGC 6960_30.0s_LP_20260908-020725.fit" oder
+    "DSO_Stacked_1160_NGC 6960_10.0s_20260906_195744.fit" (zweite Variante:
+    Zeitstempel mit Unterstrich statt Bindestrich zwischen Datum und
+    Uhrzeit, kein Filterfeld). Liefert (anzahl, belichtung_pro_sub,
+    filter_oder_None, datum) oder None.
+
+    NUR als Rueckfall in scan_project() gedacht, wenn ein Projekt am Ende
+    gar keine einzelnen Rohaufnahmen (mehr) hat (z. B. weil die Lights
+    nach dem Stacken geloescht wurden, um Platz zu sparen) - sonst wuerde
+    die hier steckende Gesamtbelichtungszeit (anzahl * belichtung) die
+    bereits aus echten Rohaufnahmen gezaehlte Belichtungszeit doppelt
+    aufaddieren. Von einem Nutzer per Mail gemeldet."""
+    stem = fn.rsplit(".", 1)[0]
+    if stem[:12].lower() == "dso_stacked_":
+        rest = stem[12:]
+    elif stem[:8].lower() == "stacked_":
+        rest = stem[8:]
+    else:
+        return None
+    tokens = rest.split("_")
+    if not tokens or not tokens[0].isdigit():
+        return None
+    count = int(tokens[0])
+    tail = tokens[1:]
+
+    ts, ts_idx = None, None
+    for i, t in enumerate(tail):
+        if _TS_FIELD_RE.match(t):
+            ts, ts_idx = t[:8], i
+            break
+        if (_UNDERSCORE_DATE_RE.match(t) and i + 1 < len(tail)
+                and _UNDERSCORE_TIME_RE.match(tail[i + 1])):
+            ts, ts_idx = t, i
+            break
+    if ts is None:
+        return None
+
+    between = tail[:ts_idx]  # Ziel, Belichtung, ggf. Filter
+    exp_idx = next((i for i, t in enumerate(between) if _EXP_FIELD_RE.match(t)), None)
+    if exp_idx is None:
+        return None
+    exp = float(_EXP_FIELD_RE.match(between[exp_idx]).group("exp"))
+
+    filt = None
+    after_exp = between[exp_idx + 1:]
+    if after_exp and after_exp[-1].upper() in FILTER_MAP:
+        filt = after_exp[-1].upper()
+
+    return count, exp, filt, ts
 
 # FILTER_MAP und CAMERA_MAP sind Einstellungen (siehe apply_config()); die
 # Werte hier sind nur die Vorgabe, falls apply_config() aus irgendeinem
@@ -13684,6 +13763,15 @@ def explicit_camera_variant(camera_raw):
     return None
 
 CATEGORY_KEYWORDS = [
+    # Von Smart-Teleskopen (z. B. ZWO Seestar) automatisch benannte
+    # Ordner fuer Nicht-Deep-Sky-Inhalte - keine Aufnahmeobjekte im
+    # eigentlichen Sinn, sollen deshalb nicht als "Nebel/Deep-Sky"
+    # (Vorgabe-Kategorie) durchgehen. Ganz oben in der Liste, da diese
+    # Ordnernamen eindeutig vom Geraet stammen, nicht vom Nutzer frei
+    # vergeben. "Sonne" bewusst eigene Kategorie statt "Sonstiges"
+    # (analog zu "Mond"/"Planet" weiter unten) - Nutzerwunsch.
+    ("Sonne", ["solar_video", "solar_photo", "sonnenfoto"]),
+    ("Sonstiges", ["scenery_video", "milkyway", "milky way"]),
     ("Komet", ["komet", "c/20", "c/19", "p/pons", "ztf", "neowise"]),
     ("Mond", ["mond", "moon"]),
     ("Planet", ["mars", "saturn", "jupiter", "venus", "merkur", "neptun", "uranus"]),
@@ -13732,8 +13820,14 @@ def compute_obs(ra_h, dec_deg, ref_year):
     od = opposition_date(ra_h, ref_year)
     alt = round(90 - abs(LATITUDE - dec_deg))
     cp = dec_deg > (90 - LATITUDE)
-    win_start = ((od - timedelta(days=90)).month)
-    win_end = ((od + timedelta(days=90)).month)
+    # +/-45 Tage (rund 3 Monate Gesamtspanne) statt vorher +/-90 Tage
+    # (6 Monate): Ein halbes Jahr war zu grosszuegig fuer "beste Zeit, das
+    # Objekt zu fotografieren" - beim Klick auf einen Monat erschienen dann
+    # Objekte, deren Hoehepunkt eigentlich 3 Monate entfernt lag. Von einem
+    # Nutzer per Mail so vorgeschlagen.
+    WIN_HALF_WIDTH_DAYS = 45
+    win_start = ((od - timedelta(days=WIN_HALF_WIDTH_DAYS)).month)
+    win_end = ((od + timedelta(days=WIN_HALF_WIDTH_DAYS)).month)
     peak_day = od.day
     peak_label = ("Anfang " if peak_day <= 10 else "Mitte " if peak_day <= 20 else "Ende ") + MONTHS_DE_SHORT[od.month - 1]
     return {"winStart": win_start, "winEnd": win_end, "peak": peak_label, "alt": alt, "cp": cp}
@@ -13852,6 +13946,13 @@ def scan_project(path):
         # PROCESSED_NAME_WORDS) - siehe edit_date(). Bewusst getrennt von
         # last_modified oben, das ueber ALLE Dateien inkl. Rohaufnahmen laeuft.
         "processed_mtime": 0.0,
+        # Aus Stacked-Ausgabedateien geparste (anzahl, belichtung, filter,
+        # datum)-Tupel (siehe parse_stacked_name()) - NUR als Rueckfall
+        # genutzt, falls das Projekt am Ende gar keine einzelnen
+        # Rohaufnahmen (mehr) hat, siehe Ende von scan_project(). Sonst
+        # wuerde die darin steckende Gesamtbelichtungszeit die aus echten
+        # Rohaufnahmen bereits gezaehlte doppelt aufaddieren.
+        "stacked_fallback": [],
     }
 
     # Filterhinweis aus dem Projektordnernamen (siehe
@@ -14008,11 +14109,30 @@ def scan_project(path):
                     result["processed_files_seen"] = True
                     if mtime > result["processed_mtime"]:
                         result["processed_mtime"] = mtime
+                    stacked = parse_stacked_name(fn)
+                    if stacked:
+                        result["stacked_fallback"].append(stacked)
                 else:
                     result["raw_count"] += 1
                     dm = DATE_IN_NAME_RE.search(fn)
                     if dm:
                         result["dates_seen"].add(dm.group(0))
+
+    # Rueckfall auf Stacked-Ausgabedateien (siehe parse_stacked_name()):
+    # NUR wenn das Projekt am Ende ueberhaupt keine Belichtungszeit aus
+    # echten Rohaufnahmen hat - sonst wuerde die hier steckende
+    # Gesamtbelichtungszeit die bereits gezaehlte doppelt aufaddieren.
+    # Typischer Fall: die Rohaufnahmen wurden nach dem Stacken geloescht,
+    # nur noch das Ergebnis liegt vor (siehe auch Archiv-Feature). Von
+    # einem Nutzer per Mail gemeldet.
+    if not result["filters"] and result["stacked_fallback"]:
+        for count, exp, filt, ts in result["stacked_fallback"]:
+            label = FILTER_MAP.get(filt, "OSC/kein Filter")
+            entry = result["filters"].setdefault(label, {"count": 0, "seconds": 0.0})
+            entry["count"] += count
+            entry["seconds"] += count * exp
+            result["hours_from_names_found"] = True
+            result["dates_seen"].add(ts)
 
     return result
 
@@ -14227,6 +14347,81 @@ def _fetch_url_with_hard_timeout(url, timeout):
 LEADING_DATE_RE = re.compile(r'^\s*\d{1,2}[.\-]\d{1,2}[.\-]\d{2,4}\s+')
 LEADING_COMPACT_DATE_RE = re.compile(r'^\s*\d{6,8}\s+')
 
+# Formatvorlage je Katalog-Praefix (siehe CATALOG_NUM_PATTERNS) fuer eine
+# SAUBERE Sesame-Anfrage, siehe catalog_query_string()/find_object_coords().
+# "c" (Caldwell) bewusst NICHT hier drin - siehe CALDWELL_TO_KEY.
+_CATALOG_QUERY_FORMAT = {
+    "ngc": "NGC{num}", "ic": "IC{num}", "m": "M{num}",
+    "sh2": "Sh2-{num}", "lbn": "LBN{num}",
+}
+
+# Der Caldwell-Katalog (Patrick Moore, 109 Objekte) hat keine bei Sesame
+# bekannte eigene Schreibweise - "Caldwell 34" und Varianten davon liefern
+# dort zuverlaessig "notfound" (getestet, kein Netzwerkfehler). Jede Nummer
+# entspricht aber 1:1 einem NGC/IC/Sh2-Objekt, das Sesame bzw. der
+# eingebaute Katalog sehr wohl kennt - deshalb hier auf den jeweiligen
+# CATALOG_NUM_PATTERNS-Praefix + Nummer abgebildet, statt "Caldwell" selbst
+# als Anfrage zu verschicken. Quelle: offizielle Zuordnungstabelle
+# (Wikipedia "Caldwell catalogue", abgerufen 2026-09-19). C14
+# (Doppelsternhaufen h+chi Persei) zeigt nur den ersten Teil (NGC 869), C41
+# (Hyaden/Melotte 25) und C99 (Kohlensack-Dunkelnebel, keine Katalognummer)
+# fehlen - beide Kataloge kennt dieses Programm sonst nicht. Von einem
+# Nutzer per Mail gemeldet (seine Caldwell-Ordner "C 20"/"C34" fanden
+# bisher keine Koordinaten).
+CALDWELL_TO_KEY = {
+    1: ("ngc", "188"), 2: ("ngc", "40"), 3: ("ngc", "4236"), 4: ("ngc", "7023"),
+    5: ("ic", "342"), 6: ("ngc", "6543"), 7: ("ngc", "2403"), 8: ("ngc", "559"),
+    9: ("sh2", "155"), 10: ("ngc", "663"), 11: ("ngc", "7635"), 12: ("ngc", "6946"),
+    13: ("ngc", "457"), 14: ("ngc", "869"), 15: ("ngc", "6826"), 16: ("ngc", "7243"),
+    17: ("ngc", "147"), 18: ("ngc", "185"), 19: ("ic", "5146"), 20: ("ngc", "7000"),
+    21: ("ngc", "4449"), 22: ("ngc", "7662"), 23: ("ngc", "891"), 24: ("ngc", "1275"),
+    25: ("ngc", "2419"), 26: ("ngc", "4244"), 27: ("ngc", "6888"), 28: ("ngc", "752"),
+    29: ("ngc", "5005"), 30: ("ngc", "7331"), 31: ("ic", "405"), 32: ("ngc", "4631"),
+    33: ("ngc", "6992"), 34: ("ngc", "6960"), 35: ("ngc", "4889"), 36: ("ngc", "4559"),
+    37: ("ngc", "6885"), 38: ("ngc", "4565"), 39: ("ngc", "2392"), 40: ("ngc", "3626"),
+    42: ("ngc", "7006"), 43: ("ngc", "7814"), 44: ("ngc", "7479"), 45: ("ngc", "5248"),
+    46: ("ngc", "2261"), 47: ("ngc", "6934"), 48: ("ngc", "2775"), 49: ("ngc", "2237"),
+    50: ("ngc", "2244"), 51: ("ic", "1613"), 52: ("ngc", "4697"), 53: ("ngc", "3115"),
+    54: ("ngc", "2506"), 55: ("ngc", "7009"), 56: ("ngc", "246"), 57: ("ngc", "6822"),
+    58: ("ngc", "2360"), 59: ("ngc", "3242"), 60: ("ngc", "4038"), 61: ("ngc", "4039"),
+    62: ("ngc", "247"), 63: ("ngc", "7293"), 64: ("ngc", "2362"), 65: ("ngc", "253"),
+    66: ("ngc", "5694"), 67: ("ngc", "1097"), 68: ("ngc", "6729"), 69: ("ngc", "6302"),
+    70: ("ngc", "300"), 71: ("ngc", "2477"), 72: ("ngc", "55"), 73: ("ngc", "1851"),
+    74: ("ngc", "3132"), 75: ("ngc", "6124"), 76: ("ngc", "6231"), 77: ("ngc", "5128"),
+    78: ("ngc", "6541"), 79: ("ngc", "3201"), 80: ("ngc", "5139"), 81: ("ngc", "6352"),
+    82: ("ngc", "6193"), 83: ("ngc", "4945"), 84: ("ngc", "5286"), 85: ("ic", "2391"),
+    86: ("ngc", "6397"), 87: ("ngc", "1261"), 88: ("ngc", "5823"), 89: ("ngc", "6087"),
+    90: ("ngc", "2867"), 91: ("ngc", "3532"), 92: ("ngc", "3372"), 93: ("ngc", "6752"),
+    94: ("ngc", "4755"), 95: ("ngc", "6025"), 96: ("ngc", "2516"), 97: ("ngc", "3766"),
+    98: ("ngc", "4609"), 100: ("ic", "2944"), 101: ("ngc", "6744"), 102: ("ic", "2602"),
+    103: ("ngc", "2070"), 104: ("ngc", "362"), 105: ("ngc", "4833"), 106: ("ngc", "104"),
+    107: ("ngc", "6101"), 108: ("ngc", "4372"), 109: ("ngc", "3195"),
+}
+
+
+def resolve_catalog_prefix_num(prefix, num):
+    """Loest Caldwell (Praefix "c") auf die tatsaechliche NGC/IC/Sh2-Nummer
+    auf (siehe CALDWELL_TO_KEY), alle anderen Praefixe unveraendert. Gibt
+    (praefix, nummer) zurueck, oder None bei einer Caldwell-Nummer ohne
+    Zuordnung (C41, C99, siehe CALDWELL_TO_KEY)."""
+    if prefix != "c":
+        return (prefix, num)
+    try:
+        return CALDWELL_TO_KEY.get(int(num))
+    except ValueError:
+        return None
+
+
+def catalog_query_string(prefix, num):
+    """Baut aus Katalog-Praefix + Nummer (siehe CATALOG_NUM_PATTERNS,
+    ggf. schon durch resolve_catalog_prefix_num() aufgeloest) eine
+    Bezeichnung, die Sesame zuverlaessig erkennt (z. B. "Sh2-131" statt
+    "SH2-131 Elefantenruesselnebel 13.07.2026" - der ganze Ordnername als
+    Anfrage scheitert bei Sesame praktisch immer). None bei unbekanntem
+    Praefix."""
+    template = _CATALOG_QUERY_FORMAT.get(prefix)
+    return template.format(num=num) if template else None
+
 
 def clean_query_name(name):
     """Leitet aus dem Ordnernamen einen sinnvollen Suchbegriff fuer die
@@ -14340,26 +14535,48 @@ def find_object_coords(name, category=None, online_cache_old=None, online_cache_
         if key in lname:
             return coords
 
-    # Kometen haben keine feste Position (sie bewegen sich staendig relativ zu
-    # den Sternen), ein "optimales Fenster" waere hier fachlich falsch bzw.
-    # irrefuehrend. Das ist eine strukturelle Einschraenkung, kein Fehler.
-    if category == "Komet":
+    # Sonnensystem-Objekte (Komet, Mond, Planet, Konjunktion) haben keine
+    # feste Position relativ zu den Sternen (Kometen bewegen sich, Mond/
+    # Planeten wandern staendig durch den Tierkreis) - ein Beobachtungs-
+    # fenster nach demselben Opposition-Verfahren wie bei Deep-Sky-Objekten
+    # waere hier fachlich falsch bzw. irrefuehrend. Das ist eine
+    # strukturelle Einschraenkung, kein Fehler. _SOLAR_SYSTEM_SIGNAL_
+    # CATEGORIES ist dieselbe Liste, die auch die Sammelordner-Erkennung
+    # weiter unten fuer Sonnensystem-Ordnernamen nutzt. Von einem Nutzer
+    # per Mail gemeldet (Jupiter/Mond zeigten ein Beobachtungsfenster ohne
+    # Aussagekraft statt gar keins).
+    if category in _SOLAR_SYSTEM_SIGNAL_CATEGORIES:
         return None
 
     # 2. Grosser eingebauter Katalog (NGC/IC/Messier/Sh2/LBN/Caldwell), rein
-    # ueber die Katalognummer im Ordnernamen erkannt
+    # ueber die Katalognummer im Ordnernamen erkannt. Caldwell wird dabei
+    # immer zuerst auf die zugehoerige NGC/IC/Sh2-Nummer umgerechnet (siehe
+    # resolve_catalog_prefix_num()/CALDWELL_TO_KEY) - "Caldwell" selbst ist
+    # weder im eingebauten Katalog noch bei Sesame als Bezeichnung bekannt.
+    # Ist die (ggf. umgerechnete) Nummer nicht im eingebauten Katalog (der
+    # deckt nur NGC/IC vollstaendig ab, von Sh2 z. B. nur einen einzigen
+    # zufaelligen Treffer), wird sie fuer Schritt 3 trotzdem gemerkt - besser
+    # eine saubere Katalogbezeichnung fuer die Online-Suche als der ganze
+    # unaufgeraeumte Ordnername.
+    catalog_query = None
     for pattern, prefix in CATALOG_NUM_PATTERNS:
         m = pattern.search(name)
         if m:
-            key = prefix + m.group(1).lower()
+            resolved = resolve_catalog_prefix_num(prefix, m.group(1))
+            if resolved is None:
+                continue  # z. B. C41/C99, siehe CALDWELL_TO_KEY
+            real_prefix, real_num = resolved
+            key = real_prefix + real_num.lower()
             if key in BIG_CATALOG:
                 return BIG_CATALOG[key]
+            if catalog_query is None:
+                catalog_query = catalog_query_string(real_prefix, real_num)
 
     # 3. Online-Namensaufloesung (nur wenn aktiviert und ein Cache uebergeben
     # wurde, also nur waehrend eines echten Scans, nicht in Tests etc.)
     if ONLINE_LOOKUP_ENABLED and online_cache_used is not None:
         return resolve_object_online(
-            name, online_cache_old or {}, online_cache_used,
+            catalog_query or name, online_cache_old or {}, online_cache_used,
             online_stats if online_stats is not None else {
                 "hits": 0, "new": 0, "notfound": 0, "failed": 0, "network_dead": False})
 
@@ -14721,7 +14938,7 @@ def build_entry_from_scan(name, scan, project_path, ref_year, resolve_camera, me
     }
 
 
-_SOLAR_SYSTEM_SIGNAL_CATEGORIES = ("Komet", "Mond", "Planet", "Konjunktion")
+_SOLAR_SYSTEM_SIGNAL_CATEGORIES = ("Komet", "Mond", "Planet", "Konjunktion", "Sonne")
 
 
 def _folder_name_has_own_signal(name):
@@ -15204,17 +15421,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   thead th{ position:sticky; top:0; background:var(--surface-2); text-align:center; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-faint); font-weight:600; padding:8px 12px; border-bottom:1px solid var(--border); cursor:pointer; }
   thead th:hover{ color:var(--text); }
   /* Sortier-Hinweis: ALLE sortierbaren Spalten bekommen dauerhaft ein
-     dezentes Symbol (sonst sieht niemand VOR dem ersten Klick, dass eine
-     Spalte ueberhaupt sortierbar ist - nur die aktive Spalte allein
-     reicht als Hinweis nicht, siehe naechste Regel). Die aktive
-     Sortier-Spalte (per JS in render() als Klasse+Datenattribut gesetzt,
-     siehe dort) ueberschreibt das mit einem deutlichen Pfeil in voller
-     Deckkraft und der tatsaechlichen Richtung. Von einem Nutzer per Mail
-     gemeldet (zweimal: erst fehlte jedes Zeichen, dann war es nur bei
-     der aktiven Spalte sichtbar)." */
-  thead th[data-key]::after{ content:" \21C5"; font-size:9px; opacity:.4; }
-  thead th.sort-active{ color:var(--text); }
-  thead th.sort-active::after{ content:" \25B2"; font-size:9px; opacity:1; }
+     deutlich sichtbares Pfeil-Symbol in voller Deckkraft (sonst sieht
+     niemand VOR dem ersten Klick, dass eine Spalte ueberhaupt sortierbar
+     ist - ein gedimmtes Symbol reichte einem Nutzer noch nicht als
+     Hinweis). Die aktive Sortier-Spalte (per JS in render() als
+     Klasse+Datenattribut gesetzt, siehe dort) hebt sich zusaetzlich per
+     Textfarbe ab und zeigt die tatsaechliche Richtung. Von einem Nutzer
+     per Mail mehrfach nachgebessert: erst fehlte jedes Zeichen, dann war
+     es nur bei der aktiven Spalte sichtbar (das urspruenglich verwendete
+     "\21C5" wurde ausserdem von seiner Schriftart nicht abgedeckt), dann
+     war das gedimmte Symbol bei den inaktiven Spalten noch zu unauffaellig. */
+  thead th[data-key]::after{ content:" \25BC"; font-size:9px; opacity:1; }
+  thead th.sort-active{ color:var(--text); font-weight:800; }
+  thead th.sort-active::after{ content:" \25B2"; font-size:9px; }
   thead th.sort-active[data-dir="-1"]::after{ content:" \25BC"; }
   tbody td{ padding:7px 9px; border-bottom:1px solid var(--border-soft); vertical-align:top; text-align:center; }
   tbody tr:hover{ background:var(--surface-2); }
@@ -15545,11 +15764,36 @@ function openFolder(path){
 
 function inWindow(m, start, end){ if(start<=end) return m>=start && m<=end; return m>=start || m<=end; }
 
+// Naeherungsweise Mondphase ueber die synodische Periode (Referenz-Neumond
+// 06.01.2000, siehe https://de.wikipedia.org/wiki/Mondphase) - fuer die
+// Kategorie "Mond" ist ein Beobachtungsfenster nach demselben Verfahren wie
+// bei Deep-Sky-Objekten fachlich unpassend (siehe fmtObsCell()), aber
+// naechster Voll-/Neumond ist eine sinnvolle, direkt berechenbare
+// Alternative. Nutzerwunsch.
+const SYNODIC_MONTH_DAYS = 29.530588853;
+const KNOWN_NEW_MOON = Date.UTC(2000, 0, 6);
+function nextMoonPhases(){
+  const now = Date.now();
+  const daysSince = (now - KNOWN_NEW_MOON) / 86400000;
+  const phaseDays = ((daysSince % SYNODIC_MONTH_DAYS) + SYNODIC_MONTH_DAYS) % SYNODIC_MONTH_DAYS;
+  const daysToNextNew = SYNODIC_MONTH_DAYS - phaseDays;
+  const daysToNextFull = phaseDays < SYNODIC_MONTH_DAYS / 2
+    ? SYNODIC_MONTH_DAYS / 2 - phaseDays
+    : SYNODIC_MONTH_DAYS * 1.5 - phaseDays;
+  return {
+    nextFull: (now + daysToNextFull * 86400000) / 1000,
+    nextNew: (now + daysToNextNew * 86400000) / 1000,
+  };
+}
 function fmtObsCell(d){
   // Wird jetzt bewusst bei ALLEN Status gezeigt, auch "Fertig" - ein
   // frueherer Versuch, das bei Fertig auszublenden, wurde von einem
   // Nutzer per Mail wieder zurueckgenommen ("kann ruhig auch bei Fertig
   // stehen").
+  if(d.category==="Mond"){
+    const {nextFull, nextNew} = nextMoonPhases();
+    return `<span class="obs-cell">Vollmond ${fmtDateShort(nextFull)} &middot; Neumond ${fmtDateShort(nextNew)}</span>`;
+  }
   const o = d.obs;
   if(!o) return '<span class="none">&ndash;</span>';
   const now = new Date().getMonth()+1;
