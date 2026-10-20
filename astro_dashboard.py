@@ -148,10 +148,12 @@ ALWAYS_EXCLUDED_FOLDER_NAMES = {"astrologbuch"}
 # Bei jeder inhaltlichen Aenderung erhoehen und einen Eintrag in
 # CHANGELOG.txt ergaenzen (siehe dort). Wird im Dashboard (Kopfzeile
 # rechts) angezeigt, damit erkennbar ist, welcher Stand gerade laeuft.
-APP_VERSION = "1.9.3"
+APP_VERSION = "1.9.4"
 
 CONFIG_FILENAME = "AstroLogbuch_config.json"
 ARCHIVE_FILENAME = "AstroLogbuch_archive.json"
+# Einmalig erfasste externe Ordner/Platten, siehe load_snapshots()/capture_snapshot().
+SNAPSHOT_FILENAME = "AstroLogbuch_snapshots.json"
 ICON_FILENAME = "AstroLogbuch.ico"  # neben Skript/EXE, siehe Schritt 2 in ANLEITUNG.txt
 
 # Laufzeit-Variablen, aus der Konfiguration befuellt (siehe apply_config()
@@ -175,7 +177,12 @@ MERGE_INTO = {
     # "200314_M101": "M101 - Feuerrad-Galaxie",
 }
 
-THUMBNAIL_MAX_PX = 160
+# 160 px reichte fuer die 88-px-Tabellenminiatur, ist aber in der
+# Kartenansicht (Karten ca. 300-500 px breit, auf HiDPI-Bildschirmen doppelt
+# so viele Bildpunkte) sichtbar pixelig - Nutzerrueckmeldung. 800 px laesst
+# die Karten auch auf grossen Bildschirmen scharf wirken.
+THUMBNAIL_MAX_PX = 800
+THUMBNAIL_JPEG_QUALITY = 80
 # Notbremse fuer make_thumbnail(): Oeffnet/liest die Bilddatei tatsaechlich
 # (nicht nur Metadaten) - genau das kann ein Echtzeit-Virenschutz am
 # gruendlichsten scannen und dadurch minutenlang blockieren (siehe
@@ -14301,6 +14308,25 @@ def save_archive(archive_path, archive):
         pass
 
 
+def load_snapshots(snapshots_path):
+    """Wie load_archive() - ein
+    Lesefehler darf nicht zu stillem Datenverlust fuehren, deshalb bei
+    Problemen ein leeres Snapshot-Set annehmen statt etwas zu loeschen."""
+    try:
+        with open(snapshots_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_snapshots(snapshots_path, snapshots):
+    try:
+        with open(snapshots_path, "w", encoding="utf-8") as f:
+            json.dump(snapshots, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
 # Sesame (CDS Strasbourg, seit Jahrzehnten stabiler oeffentlicher Dienst) loest
 # gaengige astronomische Namen/Katalognummern in Koordinaten auf und fragt
 # dafuer selbst wieder SIMBAD/NED/VizieR ab. "SNV" = alle drei Datenbanken.
@@ -14694,7 +14720,7 @@ def make_thumbnail(full_path):
             im = im.convert("RGB")
             im.thumbnail((THUMBNAIL_MAX_PX, THUMBNAIL_MAX_PX))
             buf = BytesIO()
-            im.save(buf, format="JPEG", quality=72)
+            im.save(buf, format="JPEG", quality=THUMBNAIL_JPEG_QUALITY)
             b64 = base64.b64encode(buf.getvalue()).decode("ascii")
             return f"data:image/jpeg;base64,{b64}"
     except Exception:
@@ -14777,7 +14803,10 @@ def get_thumbnail_cached(preview_path, size, mtime, old_cache, used_cache, stats
     per Namen waehlbar, nur ohne Live-Vorschau."""
     key = os.path.normcase(os.path.abspath(preview_path))
     old = old_cache.get(key)
-    if old and old.get("mtime") == mtime and old.get("size") == size:
+    # "px" haelt fest, mit welcher Kantenlaenge das Vorschaubild erzeugt wurde:
+    # Eintraege aus aelteren Versionen (kleinere Bilder, ohne "px") werden so
+    # einmalig automatisch in der neuen Aufloesung neu erzeugt.
+    if old and old.get("mtime") == mtime and old.get("size") == size and old.get("px") == THUMBNAIL_MAX_PX:
         used_cache[key] = old
         stats["hits"] += 1
         return old.get("thumb")
@@ -14792,7 +14821,7 @@ def get_thumbnail_cached(preview_path, size, mtime, old_cache, used_cache, stats
         # dauerhaft festzuschreiben (siehe make_thumbnail_with_hard_timeout).
         stats["timeout"] = stats.get("timeout", 0) + 1
         return None
-    used_cache[key] = {"mtime": mtime, "size": size, "thumb": thumb}
+    used_cache[key] = {"mtime": mtime, "size": size, "thumb": thumb, "px": THUMBNAIL_MAX_PX}
     stats["new"] += 1
     return thumb
 
@@ -15359,6 +15388,58 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .search input{ font-family:'IBM Plex Sans', sans-serif; font-size:13px; padding:7px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); width:220px; outline:none; }
   .search input:focus{ border-color:var(--accent); }
 
+  /* Ansichtsumschalter Tabelle/Karten (Prototyp, Nutzerwunsch). Icons sind
+     bewusst Inline-SVG statt Unicode-Zeichen: Sonderzeichen wie das
+     fruehere Sortier-Symbol wurden von manchen Schriftarten nicht
+     abgedeckt. */
+  .view-toggle{ display:flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  .view-toggle button{ border:none; background:var(--surface-2); color:var(--text-dim); width:34px; height:32px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0; }
+  .view-toggle button + button{ border-left:1px solid var(--border); }
+  .view-toggle button:hover{ color:var(--text); }
+  .view-toggle button.active{ background:var(--accent); color:var(--bg); }
+  .view-toggle svg{ width:16px; height:16px; fill:currentColor; }
+  .card-sort{ font-family:'IBM Plex Sans', sans-serif; font-size:13px; padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); outline:none; }
+  body.view-table .card-sort{ display:none; }
+  body.view-cards .tablewrap{ display:none; }
+  body.view-table .cards-grid{ display:none; }
+
+  /* Kartenansicht: Bild oben fast unverdeckt (nur Status, Name und Stunden
+     liegen ueber einem sanften Verlauf), alle Details in einem eigenen
+     Textfeld darunter. Vorher lag der gesamte Text ueber dem Bild, das Bild
+     war kaum noch zu sehen (Nutzerrueckmeldung). Farbiger linker Rand =
+     Status. */
+  .cards-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:16px; padding:16px; }
+  .pcard{ position:relative; border-radius:12px; overflow:hidden; background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--neutral); display:flex; flex-direction:column; }
+  .pcard.has-path{ cursor:pointer; }
+  .pcard.st-done{ border-left-color:var(--good); }
+  .pcard.st-warn{ border-left-color:var(--warn); }
+  .pcard.st-bad{ border-left-color:var(--bad); }
+  .pcard:hover{ border-color:var(--accent); box-shadow:var(--shadow); }
+  .pcard-media{ position:relative; aspect-ratio:16/10; background:var(--surface-3); overflow:hidden; }
+  .pcard-img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .pcard-ph{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:40px; color:var(--text-faint); }
+  .pcard-shade{ position:absolute; left:0; right:0; bottom:0; height:42%; background:linear-gradient(to bottom, rgba(8,10,16,0) 0%, rgba(8,10,16,.72) 100%); pointer-events:none; }
+  .pcard-status{ position:absolute; top:9px; left:10px; display:flex; }
+  .pcard .pill{ background:rgba(20,24,34,.8) !important; backdrop-filter:blur(2px); font-size:11px; padding:2px 8px; }
+  .pcard-over{ position:absolute; left:12px; right:12px; bottom:9px; display:flex; align-items:flex-end; justify-content:space-between; gap:10px; color:#f4f4ef; pointer-events:none; }
+  .pcard-name{ font-family:'IBM Plex Mono',monospace; font-size:17px; font-weight:600; line-height:1.2; text-shadow:0 1px 4px rgba(0,0,0,.7); }
+  .pcard-hours{ font-family:'IBM Plex Mono',monospace; font-size:24px; font-weight:600; color:#b3b0ff; line-height:1; white-space:nowrap; text-shadow:0 1px 4px rgba(0,0,0,.7); }
+  .pcard-hours small{ font-size:12px; color:#ddd; font-weight:400; margin-left:2px; }
+  .pcard-body{ padding:10px 14px 12px; display:flex; flex-direction:column; gap:7px; }
+  .pcard-cat{ align-self:flex-start; font-size:11px; padding:2px 8px; border-radius:999px; background:var(--surface-3); color:var(--text-dim); font-family:'IBM Plex Mono',monospace; white-space:nowrap; }
+  .pcard-chips{ display:flex; gap:6px; flex-wrap:wrap; }
+  .pcard-chip{ font-family:'IBM Plex Mono',monospace; font-size:11.5px; padding:2px 8px; border-radius:999px; background:var(--surface-2); border:1px solid var(--border-soft); color:var(--text-dim); white-space:nowrap; }
+  .pcard-chip i{ display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; background:#8b8f80; }
+  .pcard-meta{ font-size:12px; color:var(--text-dim); }
+  .pcard-meta .obs-cell, .pcard-meta .none{ font-size:12px; }
+  .pcard-cam{ font-size:11.5px; color:var(--text-faint); }
+  .pcard-sub{ font-size:11.5px; color:var(--text-faint); font-style:italic; }
+  .pcard-actions{ position:absolute; top:8px; right:8px; display:flex; gap:6px; opacity:0; transition:opacity .12s ease; z-index:2; }
+  .pcard:hover .pcard-actions{ opacity:1; }
+  .pcard-actions button{ border:1px solid rgba(255,255,255,.25); background:rgba(20,24,34,.8); color:#e8e8e2; border-radius:7px; padding:3px 8px; font-size:12px; cursor:pointer; }
+  .pcard-actions button:hover{ border-color:var(--accent); color:#fff; }
+  .pcard.row-flash{ animation:rowFlash 1.6s ease; }
+
   /* Einstellungen: Zahnrad-Knopf im Header, Panel als Overlay darueber */
   .gear-btn{ margin-top:8px; width:34px; height:34px; border-radius:9px; border:1px solid var(--border);
     background:var(--surface); color:var(--text-dim); font-size:17px; cursor:pointer; line-height:1; }
@@ -15397,6 +15478,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .map-row input{ font-family:'IBM Plex Mono',monospace; font-size:12.5px; padding:6px 9px;
     border-radius:7px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); outline:none; }
   .map-row input:focus{ border-color:var(--accent); }
+  /* Erfasste Ordner in den
+     Einstellungen. */
+  .snapshot-row{ display:flex; align-items:center; gap:8px; padding:7px 9px; border:1px solid var(--border); border-radius:8px; margin-bottom:6px; }
+  .snapshot-row .snapshot-info{ flex:1; min-width:0; }
+  .snapshot-row .snapshot-info b{ font-size:13px; }
+  .snapshot-row .field-hint{ margin:2px 0 0; }
   .settings-actions{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:22px; padding-top:16px; border-top:1px solid var(--border-soft); }
   .settings-status{ font-size:12.5px; color:var(--text-faint); flex:1; }
   .settings-status.err{ color:var(--bad); }
@@ -15592,6 +15679,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <textarea id="cfgCalibWords"></textarea>
           <p class="field-hint warn" id="cfgCalibWarn" hidden></p>
         </div>
+        <div class="settings-field">
+          <label>Erfasste Ordner</label>
+          <p class="field-hint">
+            Für externe Platten, die nicht immer angeschlossen sind: Ein erfasster Ordner wird einmalig komplett
+            eingelesen und bleibt danach dauerhaft in der Tabelle sichtbar, auch ohne dass die Platte beim nächsten
+            Programmstart da sein muss. Anders als der Astro-Hauptordner oben wird hier NICHT bei jedem Start neu
+            gescannt - nur auf Wunsch über "Aktualisieren".
+          </p>
+          <div id="snapshotList"></div>
+          <div class="folder-row" style="margin-top:8px;">
+            <button class="btn tiny" id="captureSnapshotBtn" type="button">+ Ordner erfassen&hellip;</button>
+          </div>
+          <p class="field-hint" id="snapshotStatus"></p>
+        </div>
       </div>
       <div class="settings-actions">
         <span class="settings-status" id="settingsStatus"></span>
@@ -15634,7 +15735,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="chipset" id="catChips"></div>
       </div>
       <div class="search"><input id="searchBox" type="text" placeholder="Objekt suchen..."></div>
+      <select class="card-sort" id="cardSort" title="Sortierung der Kartenansicht">
+        <option value="lastModified:-1">Zuletzt bearbeitet</option>
+        <option value="name:1">Name A&ndash;Z</option>
+        <option value="hours:-1">Meiste Stunden</option>
+        <option value="nights:-1">Meiste Nächte</option>
+        <option value="statusSort:1">Status</option>
+        <option value="category:1">Typ</option>
+        <option value="obsSort:1">Beobachtungsfenster</option>
+      </select>
+      <div class="view-toggle" id="viewToggle">
+        <button type="button" data-view="table" title="Tabellenansicht"><svg viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="2.4" rx="1"/><rect x="1" y="6.8" width="14" height="2.4" rx="1"/><rect x="1" y="11.6" width="14" height="2.4" rx="1"/></svg></button>
+        <button type="button" data-view="cards" title="Kartenansicht"><svg viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.4"/><rect x="9" y="1" width="6" height="6" rx="1.4"/><rect x="1" y="9" width="6" height="6" rx="1.4"/><rect x="9" y="9" width="6" height="6" rx="1.4"/></svg></button>
+      </div>
     </div>
+    <div class="cards-grid" id="cards"></div>
     <div class="tablewrap">
       <table>
         <colgroup>
@@ -15713,7 +15828,84 @@ const STATUS_META = {
   "archived":    {label:"Archiviert",    cls:"neutral", sort:6},
 };
 const MONTHS_DE = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
-let state = { status:"all", cat:"all", q:"", sortKey:"lastModified", sortDir:-1, previewMonth: new Date().getMonth()+1, hideFinishedNow:true };
+let state = { status:"all", cat:"all", q:"", sortKey:"lastModified", sortDir:-1, previewMonth: new Date().getMonth()+1, hideFinishedNow:true, view:"table" };
+// Gewaehlte Ansicht (Tabelle/Karten) merkt sich der Browser lokal; ein
+// Fehlschlag (z. B. gesperrter Speicher) ist unkritisch, dann gilt "table".
+try{ const v = localStorage.getItem("astrologbuch_view"); if(v==="cards"||v==="table") state.view = v; }catch(e){}
+
+// Kartenansicht: Filter-Chips mit Stunden je Filter. Die Stunden werden aus
+// der bereits vorhandenen Textzusammenfassung ("Ha 12x300s · R 6x180s")
+// zurueckgerechnet, so funktioniert das auch fuer Archiv- und erfasste
+// Eintraege ohne zusaetzliche Datenfelder.
+const FILTER_COLORS = {r:"#e0594f", red:"#e0594f", rot:"#e0594f", g:"#4fc07a", green:"#4fc07a", gruen:"#4fc07a",
+  b:"#4aa3e0", blue:"#4aa3e0", blau:"#4aa3e0", l:"#d8d8d0", lum:"#d8d8d0", luminance:"#d8d8d0",
+  ha:"#b8453f", oiii:"#3bbfb2", o3:"#3bbfb2", sii:"#e08a3c", s2:"#e08a3c"};
+function filterChips(d){
+  if(!d.filters || d.filters==="–") return "";
+  return d.filters.split(" · ").map(part=>{
+    const m = part.match(/^(.+?)\s+(\d+)[×x](\d+(?:\.\d+)?)s/);
+    if(!m) return "";
+    const label = m[1].trim();
+    const hrs = (parseInt(m[2],10) * parseFloat(m[3]) / 3600);
+    const col = FILTER_COLORS[label.toLowerCase().replace(/[^a-z0-9]/g,"")] || "#8b8f80";
+    return `<span class="pcard-chip"><i style="background:${col}"></i>${label} ${hrs.toFixed(1)}h</span>`;
+  }).join("");
+}
+function relDays(ts){
+  if(!ts) return null;
+  const days = Math.floor((Date.now() - ts*1000) / 86400000);
+  if(days<=0) return "heute";
+  if(days===1) return "gestern";
+  if(days<60) return `vor ${days} Tagen`;
+  const months = Math.floor(days/30.4);
+  if(months<24) return `vor ${months} Monaten`;
+  return `vor ${Math.floor(days/365.25)} Jahren`;
+}
+function cardHtml(d){
+  const meta = STATUS_META[d.status];
+  const stCls = meta.cls==="done" ? "st-done" : meta.cls==="open" ? "st-warn" : meta.cls==="unclear" ? "st-bad" : "";
+  const edited = fmtDateShort(d.lastModified), captured = fmtDateShort(d.captureDate);
+  const rel = relDays(d.captureDate);
+  let dates = "";
+  if(captured) dates += `Aufnahme ${rel} &middot; ${captured}`;
+  if(edited && edited!==captured) dates += `${dates?" &middot; ":""}bearbeitet ${edited}`;
+  const hours = d.hours==null ? "" : `<div class="pcard-hours">${d.hoursExact?"":"~"}${d.hours}<small>h</small></div>`;
+  const chips = filterChips(d);
+  const cam = d.cameras && d.cameras!=="–" ? `<div class="pcard-cam">${d.cameras}</div>` : "";
+  const subs = [d.group?`Gruppe: ${d.group}`:"", d.snapshotLabel?`Platte: ${d.snapshotLabel}`:"", d.note||""].filter(Boolean)
+    .map(s=>`<div class="pcard-sub">${s}</div>`).join("");
+  const img = d.thumb ? `<img class="pcard-img" src="${d.thumb}" alt="" loading="lazy">` : `<div class="pcard-ph">&#9729;</div>`;
+  const actions = (d.path ? `<button type="button" data-act="pick" title="Vorschaubild wählen">Bild</button>` : "")
+    + (d.status==="archived" ? `<button type="button" data-act="del" data-name="${encodeURIComponent(d.name)}" title="Archiv-Eintrag entfernen (löscht keine echten Dateien)">&times;</button>` : "");
+  return `<div class="pcard ${stCls}${d.path?" has-path":""}"${d.path?` data-path="${encodeURIComponent(d.path)}" title="Klick öffnet den Ordner"`:""}>
+    <div class="pcard-media">
+      ${img}<div class="pcard-shade"></div>
+      <div class="pcard-status"><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span></div>
+      <div class="pcard-actions">${actions}</div>
+      <div class="pcard-over"><span class="pcard-name">${d.name}</span>${hours}</div>
+    </div>
+    <div class="pcard-body">
+      <span class="pcard-cat">${d.category}</span>
+      ${chips?`<div class="pcard-chips">${chips}</div>`:""}
+      ${dates?`<div class="pcard-meta">${dates}</div>`:""}
+      <div class="pcard-meta">${fmtObsCell(d)}</div>
+      ${cam}${subs}
+    </div>
+  </div>`;
+}
+// Das gerade sichtbare Listenelement (Tabelle oder Kartenraster), z. B. zum
+// Hinscrollen nach einem Klick auf eine Statistik-Kachel.
+function activeListEl(){
+  return document.querySelector(state.view==="cards" ? "#cards" : ".tablewrap");
+}
+function applyView(){
+  document.body.classList.toggle("view-cards", state.view==="cards");
+  document.body.classList.toggle("view-table", state.view!=="cards");
+  document.querySelectorAll("#viewToggle button").forEach(b=>b.classList.toggle("active", b.dataset.view===state.view));
+  const sel = document.getElementById("cardSort");
+  const want = `${state.sortKey}:${state.sortDir}`;
+  sel.selectedIndex = [...sel.options].findIndex(o=>o.value===want);
+}
 
 // Ein reiner file://-Link wuerde in Chrome & Co. nur eine Dateiliste im
 // Browser selbst zeigen, nie den echten Windows-Explorer. Solange dieses
@@ -15923,7 +16115,16 @@ function render(){
     if(isActive) th.dataset.dir = state.sortDir; else delete th.dataset.dir;
   });
 
-  document.getElementById("rows").innerHTML = rows.map(d=>{
+  applyView();
+  // Nur die gerade sichtbare Ansicht wird neu aufgebaut (die andere ist per
+  // CSS ausgeblendet), das spart bei vielen Projekten Renderzeit.
+  if(state.view==="cards"){
+    document.getElementById("cards").innerHTML = rows.map(cardHtml).join("");
+    document.getElementById("rows").innerHTML = "";
+  } else {
+    document.getElementById("cards").innerHTML = "";
+  }
+  if(state.view!=="cards") document.getElementById("rows").innerHTML = rows.map(d=>{
     const meta = STATUS_META[d.status];
     const img = d.thumb ? `<img class="thumb" src="${d.thumb}" alt="">` : `<div class="thumb-ph">&#9729;</div>`;
     const nameHtml = d.path
@@ -15931,7 +16132,7 @@ function render(){
       : `<span class="obj">${d.name}</span>`;
     return `<tr${d.path?` class="row-link" data-path="${encodeURIComponent(d.path)}"`:""}>
       <td class="img-col"${d.path?` title="Klick wählt das Vorschaubild"`:""}>${img}</td>
-      <td>${nameHtml}${d.group?`<span class="obj-sub">Gruppe: ${d.group}</span>`:""}${d.tag?`<span class="obj-sub">Monatshinweis: ${d.tag}</span>`:""}${d.note?`<span class="merge-note">${d.note}</span>`:""}</td>
+      <td>${nameHtml}${d.group?`<span class="obj-sub">Gruppe: ${d.group}</span>`:""}${d.tag?`<span class="obj-sub">Monatshinweis: ${d.tag}</span>`:""}${d.snapshotLabel?`<span class="obj-sub">Platte: ${d.snapshotLabel}${fmtDateShort(d.snapshotDate)?` &middot; erfasst ${fmtDateShort(d.snapshotDate)}`:""}</span>`:""}${d.note?`<span class="merge-note">${d.note}</span>`:""}</td>
       <td class="ctr-col"><span class="cat">${d.category}</span></td>
       <td class="ctr-col"><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span>${d.status==="archived"?`<button class="archive-del" type="button" title="Archiv-Eintrag entfernen (löscht keine echten Dateien)" data-name="${encodeURIComponent(d.name)}">&times;</button>`:""}</td>
       <td class="num-col">${fmtDateCell(d)}</td>
@@ -16012,7 +16213,7 @@ document.getElementById("stats").addEventListener("click", e=>{
   if(!el) return;
   state.status = el.dataset.statStatus;
   render();
-  scrollElementIntoView(document.querySelector(".tablewrap"), "start");
+  scrollElementIntoView(activeListEl(), "start");
 });
 document.getElementById("catChips").addEventListener("click", e=>{ const el=e.target.closest("[data-cat]"); if(!el) return; state.cat=el.dataset.cat; render(); });
 document.getElementById("monthChips").addEventListener("click", e=>{ const el=e.target.closest("[data-month]"); if(!el) return; state.previewMonth=parseInt(el.dataset.month,10); render(); });
@@ -16027,7 +16228,9 @@ document.getElementById("nowBody").addEventListener("click", e=>{
   state.status = "all"; state.cat = "all"; state.q = "";
   document.getElementById("searchBox").value = "";
   render();
-  const row = document.querySelector(`tbody tr[data-path="${el.dataset.path}"]`);
+  const row = document.querySelector(state.view==="cards"
+    ? `.pcard[data-path="${el.dataset.path}"]`
+    : `tbody tr[data-path="${el.dataset.path}"]`);
   if(!row) return;
   scrollElementIntoView(row, "center");
   row.classList.remove("row-flash");
@@ -16036,6 +16239,34 @@ document.getElementById("nowBody").addEventListener("click", e=>{
   row.addEventListener("animationend", ()=> row.classList.remove("row-flash"), {once:true});
 });
 document.getElementById("searchBox").addEventListener("input", e=>{ state.q=e.target.value.trim().toLowerCase(); render(); });
+document.getElementById("viewToggle").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-view]"); if(!b) return;
+  state.view = b.dataset.view;
+  try{ localStorage.setItem("astrologbuch_view", state.view); }catch(err){}
+  render();
+});
+document.getElementById("cardSort").addEventListener("change", e=>{
+  const [key, dir] = e.target.value.split(":");
+  state.sortKey = key; state.sortDir = parseInt(dir,10); render();
+});
+// Kartenansicht: Klick auf die Karte oeffnet den Ordner, "Bild" oeffnet die
+// Vorschaubild-Auswahl, "x" entfernt einen Archiv-Eintrag (wie in der Tabelle).
+document.getElementById("cards").addEventListener("click", e=>{
+  const act = e.target.closest("button[data-act]");
+  const card = e.target.closest(".pcard");
+  if(act){
+    if(act.dataset.act==="pick" && card && card.dataset.path) openPreviewPicker(decodeURIComponent(card.dataset.path));
+    if(act.dataset.act==="del"){
+      const name = decodeURIComponent(act.dataset.name);
+      if(!confirm(`Archiv-Eintrag "${name}" wirklich entfernen? Das löscht keine echten Dateien, nur den Logbuch-Eintrag.`)) return;
+      window.pywebview.api.delete_archive_entry(name).then(result=>{
+        if(result.ok) location.reload(); else alert(result.error || "Fehler beim Entfernen.");
+      });
+    }
+    return;
+  }
+  if(card && card.dataset.path) openFolder(decodeURIComponent(card.dataset.path));
+});
 document.querySelectorAll("thead th[data-key]").forEach(th=>{ th.addEventListener("click", ()=>{ const key=th.dataset.key; if(state.sortKey===key){state.sortDir*=-1;}else{state.sortKey=key;state.sortDir=1;} render(); }); });
 // Klick auf eine Zeile oeffnet den Ordner (siehe openFolder() oben), Klick
 // auf das Vorschaubild oeffnet stattdessen die Bildauswahl (siehe
@@ -16200,6 +16431,7 @@ function openSettings(){
     mapToRows(cameraMapTable, cfg.camera_map, "Rohcode, z. B. 2600", "Anzeigename, z. B. ASI2600");
     mapToRows(filterMapTable, cfg.filter_map, "Kürzel, z. B. H", "Anzeigename, z. B. Ha");
     updateCalibWarning();
+    loadSnapshotList();
     settingsOverlay.hidden = false;
   }).catch(err=>{
     settingsStatus.textContent = "Konnte Einstellungen nicht laden: " + err;
@@ -16208,6 +16440,76 @@ function openSettings(){
   });
 }
 function closeSettings(){ settingsOverlay.hidden = true; }
+
+// ----------------------------------------------------------------------
+// Erfasste Ordner
+// ----------------------------------------------------------------------
+const snapshotListEl = document.getElementById("snapshotList");
+const snapshotStatusEl = document.getElementById("snapshotStatus");
+
+function renderSnapshotList(snapshots){
+  const entries = Object.entries(snapshots || {});
+  if(!entries.length){
+    snapshotListEl.innerHTML = '<p class="field-hint">Noch keine Ordner erfasst.</p>';
+    return;
+  }
+  snapshotListEl.innerHTML = entries.map(([key, s])=>{
+    const date = fmtDateShort(s.capturedAt) || "?";
+    return `<div class="snapshot-row" data-key="${encodeURIComponent(key)}">
+      <div class="snapshot-info">
+        <b>${s.label}</b>
+        <p class="field-hint">${s.count} Projekte &middot; erfasst ${date} &middot; ${s.sourcePath}</p>
+      </div>
+      <button class="btn tiny" type="button" data-action="refresh">Aktualisieren</button>
+      <button class="btn tiny" type="button" data-action="delete">Entfernen</button>
+    </div>`;
+  }).join("");
+}
+
+function loadSnapshotList(){
+  window.pywebview.api.list_snapshots().then(renderSnapshotList).catch(()=>{
+    snapshotListEl.innerHTML = '<p class="field-hint">Konnte erfasste Ordner nicht laden.</p>';
+  });
+}
+
+document.getElementById("captureSnapshotBtn").addEventListener("click", ()=>{
+  window.pywebview.api.pick_folder().then(res=>{
+    if(!res || !res.path) return;
+    const defaultLabel = res.path.split(/[\\/]/).filter(Boolean).pop() || res.path;
+    const label = prompt("Name für diesen Ordner (frei wählbar, z. B. \"Platte 2\"):", defaultLabel);
+    if(label === null) return; // Nutzer hat abgebrochen
+    snapshotStatusEl.textContent = "Wird eingelesen, kann bei vielen Dateien etwas dauern …";
+    snapshotStatusEl.className = "field-hint";
+    window.pywebview.api.capture_snapshot(res.path, label).then(result=>{
+      if(result.ok){
+        snapshotStatusEl.textContent = "Ordner erfasst. Lade neu …";
+        setTimeout(()=> location.reload(), 600);
+      } else {
+        snapshotStatusEl.textContent = result.error || "Unbekannter Fehler.";
+        snapshotStatusEl.className = "field-hint warn";
+      }
+    });
+  });
+});
+
+snapshotListEl.addEventListener("click", e=>{
+  const btn = e.target.closest("button[data-action]");
+  if(!btn) return;
+  const row = btn.closest(".snapshot-row");
+  const key = decodeURIComponent(row.dataset.key);
+  if(btn.dataset.action === "delete"){
+    if(!confirm("Diesen erfassten Ordner wirklich entfernen? Löscht keine echten Dateien, nur den Logbuch-Eintrag.")) return;
+    btn.disabled = true;
+    window.pywebview.api.delete_snapshot(key).then(()=> location.reload());
+  } else if(btn.dataset.action === "refresh"){
+    btn.disabled = true;
+    btn.textContent = "Lädt …";
+    window.pywebview.api.refresh_snapshot(key).then(result=>{
+      if(result.ok) location.reload();
+      else { alert(result.error || "Fehler beim Aktualisieren."); btn.disabled = false; btn.textContent = "Aktualisieren"; }
+    });
+  }
+});
 
 // Warnt, wenn ein eingetragenes Kalibrier-Schluesselwort auch im Namen eines
 // Aufnahmeordners steckt (z. B. "lights"). Solche Ordner werden zwar seit
@@ -16516,7 +16818,8 @@ def render_loading_page():
     return LOADING_HTML_TEMPLATE.replace("%%LOGO_B64%%", APP_LOGO_PNG_BASE64)
 
 
-def run_scan_and_build(out_dir, thumb_cache_path, object_cache_path, archive_path, progress_cb=None):
+def run_scan_and_build(out_dir, thumb_cache_path, object_cache_path, archive_path,
+                        snapshots_path=None, progress_cb=None):
     """Fuehrt einen kompletten Scan mit den aktuell gueltigen (globalen)
     Einstellungen durch, schreibt AstroLogbuch.html und gibt den fertigen
     HTML-Inhalt plus Projektanzahl zurueck. Wirft eine Exception weiter,
@@ -16543,6 +16846,21 @@ def run_scan_and_build(out_dir, thumb_cache_path, object_cache_path, archive_pat
     print(done_line, flush=True)
     if progress_cb:
         progress_cb(text=done_line)
+
+    # Einmalig erfasste externe Ordner
+    # (typischerweise Platten, die nicht immer angeschlossen sind) werden
+    # hier eingemischt - im Unterschied zum Astro-Hauptordner oben KEIN
+    # Live-Scan, sondern die beim Erfassen gespeicherten Projektdaten (siehe
+    # Api.capture_snapshot()). Jedes Projekt bekommt ein Etikett, welcher
+    # erfasste Ordner es liefert, damit es in der Tabelle erkennbar bleibt.
+    if snapshots_path:
+        snapshots = load_snapshots(snapshots_path)
+        for snap in snapshots.values():
+            for p in snap.get("projects", []):
+                p = dict(p)
+                p["snapshotLabel"] = snap.get("label")
+                p["snapshotDate"] = snap.get("captured_at")
+                projects.append(p)
 
     html_content = build_dashboard_html(projects, ROOT_FOLDER)
     output_html = os.path.join(out_dir, "AstroLogbuch.html")
@@ -16607,12 +16925,14 @@ class Api:
     im Log. Mit dem Unterstrich ueberspringt get_functions() dieses
     Attribut von vornherein (siehe "if name.startswith('_'): continue")."""
 
-    def __init__(self, state, config_path, thumb_cache_path, object_cache_path, archive_path, out_dir):
+    def __init__(self, state, config_path, thumb_cache_path, object_cache_path, archive_path,
+                 snapshots_path, out_dir):
         self.state = state
         self.config_path = config_path
         self.thumb_cache_path = thumb_cache_path
         self.object_cache_path = object_cache_path
         self.archive_path = archive_path
+        self.snapshots_path = snapshots_path
         self.out_dir = out_dir
         self._window = None
 
@@ -16664,7 +16984,7 @@ class Api:
         try:
             html_content, count = run_scan_and_build(
                 self.out_dir, self.thumb_cache_path, self.object_cache_path, self.archive_path,
-                progress_cb=progress_cb)
+                snapshots_path=self.snapshots_path, progress_cb=progress_cb)
         except Exception as exc:
             traceback.print_exc()
             return {"ok": False, "error": f"Fehler beim Einlesen des Ordners: {exc}"}
@@ -16691,6 +17011,67 @@ class Api:
         if name in archive:
             del archive[name]
             save_archive(self.archive_path, archive)
+        return self.rescan()
+
+    def capture_snapshot(self, path, label=""):
+        """liest einen Ordner (z. B.
+        eine externe, nicht immer angeschlossene Platte) EINMALIG komplett
+        ein und sichert alle seine Projekte dauerhaft in
+        AstroLogbuch_snapshots.json - im Unterschied zum Astro-Hauptordner
+        OHNE wiederkehrenden Live-Scan bei jedem Programmstart. Erneutes
+        Erfassen desselben Pfads (z. B. ueber refresh_snapshot()) ersetzt
+        den bisherigen Stand fuer genau diesen Ordner."""
+        if not path or not os.path.isdir(path):
+            return {"ok": False, "error": f"Ordner nicht gefunden: {path}"}
+        try:
+            ref_year = date.today().year
+            projects = scan_root(path, ref_year, thumb_cache_path=self.thumb_cache_path,
+                                  object_cache_path=self.object_cache_path)
+        except Exception as exc:
+            traceback.print_exc()
+            return {"ok": False, "error": f"Fehler beim Einlesen: {exc}"}
+        snapshots = load_snapshots(self.snapshots_path)
+        key = os.path.normcase(os.path.normpath(os.path.abspath(path)))
+        snapshots[key] = {
+            "label": label.strip() if label and label.strip() else os.path.basename(path.rstrip("\\/")) or path,
+            "source_path": path,
+            "captured_at": time.time(),
+            "projects": projects,
+        }
+        save_snapshots(self.snapshots_path, snapshots)
+        return self.rescan()
+
+    def list_snapshots(self):
+        """Metadaten (ohne die
+        potenziell grosse Projektliste) fuer die Einstellungen-Anzeige."""
+        snapshots = load_snapshots(self.snapshots_path)
+        return {
+            key: {
+                "label": s.get("label", key),
+                "sourcePath": s.get("source_path", ""),
+                "capturedAt": s.get("captured_at"),
+                "count": len(s.get("projects", [])),
+            }
+            for key, s in snapshots.items()
+        }
+
+    def refresh_snapshot(self, key):
+        """liest einen bereits
+        erfassten Ordner erneut ein (braucht die Platte wieder
+        angeschlossen)."""
+        snapshots = load_snapshots(self.snapshots_path)
+        entry = snapshots.get(key)
+        if not entry:
+            return {"ok": False, "error": "Erfasster Ordner nicht gefunden."}
+        return self.capture_snapshot(entry.get("source_path", ""), entry.get("label", ""))
+
+    def delete_snapshot(self, key):
+        """entfernt einen erfassten
+        Ordner wieder, loescht dabei nie echte Dateien."""
+        snapshots = load_snapshots(self.snapshots_path)
+        if key in snapshots:
+            del snapshots[key]
+            save_snapshots(self.snapshots_path, snapshots)
         return self.rescan()
 
     def list_preview_candidates(self, project_path):
@@ -16760,7 +17141,8 @@ class Api:
         return self.apply_settings(cfg)
 
 
-def try_launch_webview(config, config_path, thumb_cache_path, object_cache_path, archive_path, out_dir):
+def try_launch_webview(config, config_path, thumb_cache_path, object_cache_path, archive_path,
+                        snapshots_path, out_dir):
     """Baut das App-Fenster auf und blockiert (wie server.serve_forever()
     vorher), bis das Fenster geschlossen wird. Gibt True zurueck, wenn das
     grundsaetzlich funktioniert hat (auch wenn z. B. der Scan selbst einen
@@ -16790,7 +17172,8 @@ def try_launch_webview(config, config_path, thumb_cache_path, object_cache_path,
     url = f"http://127.0.0.1:{port}/"
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    api = Api(state, config_path, thumb_cache_path, object_cache_path, archive_path, out_dir)
+    api = Api(state, config_path, thumb_cache_path, object_cache_path, archive_path,
+              snapshots_path, out_dir)
 
     def progress_cb(current=None, total=None, text=None):
         """Aktualisiert state["progress"], das /progress fuer den
@@ -16924,7 +17307,7 @@ def try_launch_webview(config, config_path, thumb_cache_path, object_cache_path,
 # Browser-Modus (Fallback, falls pywebview fehlt oder nicht funktioniert)
 # ======================================================================
 
-def run_legacy_browser_mode(out_dir, thumb_cache_path, object_cache_path, archive_path):
+def run_legacy_browser_mode(out_dir, thumb_cache_path, object_cache_path, archive_path, snapshots_path):
     if not ROOT_FOLDER or not os.path.isdir(ROOT_FOLDER):
         print(f"FEHLER: Ordner nicht gefunden: {ROOT_FOLDER!r}")
         print("Bitte den Ordner in den Einstellungen (App-Ansicht) waehlen, oder")
@@ -16933,7 +17316,8 @@ def run_legacy_browser_mode(out_dir, thumb_cache_path, object_cache_path, archiv
         return
 
     try:
-        html_content, count = run_scan_and_build(out_dir, thumb_cache_path, object_cache_path, archive_path)
+        html_content, count = run_scan_and_build(out_dir, thumb_cache_path, object_cache_path, archive_path,
+                                                   snapshots_path=snapshots_path)
     except Exception:
         traceback.print_exc()
         input("\nEin Fehler ist beim Einlesen aufgetreten (siehe oben). Enter zum Beenden...")
@@ -16987,6 +17371,7 @@ def main():
     thumb_cache_path = os.path.join(out_dir, THUMB_CACHE_FILENAME)
     object_cache_path = os.path.join(out_dir, OBJECT_CACHE_FILENAME)
     archive_path = os.path.join(out_dir, ARCHIVE_FILENAME)
+    snapshots_path = os.path.join(out_dir, SNAPSHOT_FILENAME)
 
     config = load_config(config_path)
     apply_config(config)
@@ -16995,8 +17380,9 @@ def main():
         print("Hinweis: Paket 'Pillow' nicht gefunden, Vorschaubilder werden übersprungen.", flush=True)
         print("Für Vorschaubilder einmalig: pip install pillow\n", flush=True)
 
-    if not try_launch_webview(config, config_path, thumb_cache_path, object_cache_path, archive_path, out_dir):
-        run_legacy_browser_mode(out_dir, thumb_cache_path, object_cache_path, archive_path)
+    if not try_launch_webview(config, config_path, thumb_cache_path, object_cache_path, archive_path,
+                               snapshots_path, out_dir):
+        run_legacy_browser_mode(out_dir, thumb_cache_path, object_cache_path, archive_path, snapshots_path)
 
 
 if __name__ == "__main__":

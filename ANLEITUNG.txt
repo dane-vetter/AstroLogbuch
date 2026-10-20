@@ -65,7 +65,8 @@ Zahnrad-Symbol. Darueber lassen sich jederzeit aendern:
 - ob Vorschaubilder angezeigt werden,
 - eigene Kamera- und Filterbezeichnungen (siehe "Fuer andere Nutzer"
   unten),
-- ausgeschlossene Ordnernamen und Kalibrier-Schluesselwoerter.
+- ausgeschlossene Ordnernamen und Kalibrier-Schluesselwoerter,
+- erfasste Ordner (siehe unten "Erfasste Ordner / externe Platten").
 
 Nach "Speichern & neu einlesen" liest das Programm den (ggf. neuen)
 Ordner sofort mit den neuen Einstellungen neu ein, ganz ohne Neustart.
@@ -85,6 +86,30 @@ Light-Dateinamen steht als zweite Zeile in derselben Spalte) - das ist
 auch die Voreinstellung beim Start. Jede sortierbare Spalte zeigt dauerhaft
 ein kleines Sortier-Symbol, die aktive Sortierung zusaetzlich einen
 Pfeil in der tatsaechlichen Richtung.
+
+Kartenansicht: Neben der Suche gibt es einen Umschalter zwischen Tabelle
+(Listensymbol) und Karten (Kachelsymbol). In der Kartenansicht steht
+jedes Projekt als Karte mit grossem Vorschaubild; darauf liegen nur Status,
+Objektname und Stunden gesamt, alle weiteren Angaben (Typ, Stunden je
+Filter, Aufnahme- und Bearbeitungsdatum, Beobachtungsfenster, Kamera) stehen
+in einem Textfeld darunter. Ein Klick auf die Karte oeffnet den Ordner, beim
+Ueberfahren erscheint oben rechts "Bild" fuer die Vorschaubild-Auswahl.
+Weil es in der Kartenansicht keine Spaltenkoepfe gibt, wird dort ueber
+eine Auswahlliste neben der Suche sortiert. Suche und Filter gelten in
+beiden Ansichten, die gewaehlte Ansicht merkt sich das Programm.
+
+Erfasste Ordner / externe Platten: Liegen deine Projekte auf mehreren
+externen Platten, die nicht immer angeschlossen sind, kannst du jede
+Platte einmal erfassen: Einstellungen (Zahnrad) -> "Erfasste Ordner" ->
+"+ Ordner erfassen..." -> Ordner waehlen -> einen Namen vergeben (z. B.
+"Platte 2"). Das Programm liest den Ordner einmal komplett ein, und die
+Projekte bleiben danach dauerhaft in Tabelle und Karten sichtbar (mit der
+Zusatzzeile "Platte: <Name>"), auch wenn die Platte beim naechsten Start
+nicht angeschlossen ist. Anders als der Astro-Hauptordner wird ein
+erfasster Ordner NICHT bei jedem Start neu gelesen, sondern nur auf Wunsch
+ueber "Aktualisieren" in der Einstellungen-Liste (dann muss die Platte
+wieder dran sein). "Entfernen" loescht nur den Logbuch-Eintrag, nie echte
+Dateien. Gespeichert wird in AstroLogbuch_snapshots.json neben der EXE.
 
 Im Panel "Jetzt gut zu erreichen" laesst sich ueber die Monatsleiste durch
 alle zwoelf Monate blaettern - ein Klick auf einen Monat zeigt, welche

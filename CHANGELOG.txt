@@ -4,6 +4,37 @@ CHANGELOG - AstroLogbuch
 Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
 oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
 
+v1.9.4 - 2026-10-20
+--------------------
+- Neu: Kartenansicht. Neben der Suche gibt es einen Umschalter zwischen
+  Tabelle und Karten (die Wahl wird gemerkt). Jede Karte zeigt oben das
+  Vorschaubild mit Status, Objektname und Stunden gesamt, darunter in
+  einem eigenen Textfeld Typ, Filter-Chips mit Stunden je Filter,
+  Aufnahme-/Bearbeitungsdatum, Beobachtungsfenster, Kamera und
+  Zusatzzeilen. Klick auf die Karte oeffnet den Ordner, beim Ueberfahren
+  erscheint "Bild" fuer die Vorschaubild-Auswahl. Suche, Filter,
+  Statistik-Kacheln und das Panel "gut zu erreichen" funktionieren in
+  beiden Ansichten; die Kartenansicht hat eine eigene Sortierauswahl.
+- Neu: "Erfasste Ordner" in den Einstellungen. Fuer externe Platten, die
+  nicht immer angeschlossen sind - ein erfasster Ordner wird einmalig
+  komplett eingelesen (scan_root(), unveraendert) und bleibt danach
+  dauerhaft in der Tabelle sichtbar (eigene Datei
+  AstroLogbuch_snapshots.json), auch ohne dass die Platte beim naechsten
+  Programmstart angeschlossen ist. Anders als der Astro-Hauptordner KEIN
+  wiederkehrender Live-Scan, nur auf Wunsch ueber "Aktualisieren" (braucht
+  die Platte dann wieder). Zeilen aus einem erfassten Ordner zeigen
+  "Platte: <Name> - erfasst <Datum>" als Zusatzzeile. Ergaenzt das Archiv
+  fertiger Projekte (gleiche Grundidee: einmal erfassen, dauerhaft
+  merken, unabhaengig davon, ob die Quelle noch da ist). Von einem Nutzer
+  im Forum vorgeschlagen.
+- Geaendert: Vorschaubilder werden jetzt mit 800 statt 160 Pixeln
+  Kantenlaenge erzeugt (fuer die Kartenansicht, vorher sichtbar
+  pixelig). Der Zwischenspeicher erkennt die alte Aufloesung selbst, beim
+  ersten Start werden die Bilder einmalig neu erzeugt (dauert etwas
+  laenger). Zwischenspeicher und Dashboard werden dadurch groesser.
+  Bereits archivierte Projekte, deren Ordner nicht mehr existiert,
+  behalten ihr altes kleines Bild.
+
 v1.9.3 - 2026-09-19
 --------------------
 - Neu: XISF-Dateien (PixInsight) werden jetzt als Rohaufnahmen erkannt.
