@@ -138,6 +138,17 @@ DEFAULT_CONFIG = {
     # Schluessel fuer ein Projekt, gilt weiterhin die automatische Heuristik
     # (pick_preview_file()) - das ist der Normalfall fuer die meisten Projekte.
     "preview_overrides": {},
+    # Gewaehlte Ansicht ("table" oder "cards"). Bewusst in der Config statt im
+    # Browser-Speicher (localStorage): das Programmfenster laeuft im privaten
+    # Modus und der lokale Server hat bei jedem Start einen anderen Port,
+    # beides verwirft localStorage beim Beenden.
+    "view_mode": "table",
+    # Manuell gesetzter Bildausschnitt der Kartenansicht je Projekt:
+    # Schluessel = Projektordnerpfad (bei archivierten Projekten ohne Ordner
+    # "archiv:<Name>"), Wert = [x, y] (Mittelpunkt des Ausschnitts, 0..1).
+    # Fehlt ein Eintrag, berechnet die Seite den Ausschnitt selbst
+    # (siehe autoFocus() im JS-Teil).
+    "focus_overrides": {},
 }
 
 # "astrologbuch" (der Ordner dieses Tools selbst) ist immer ausgeschlossen,
@@ -148,7 +159,7 @@ ALWAYS_EXCLUDED_FOLDER_NAMES = {"astrologbuch"}
 # Bei jeder inhaltlichen Aenderung erhoehen und einen Eintrag in
 # CHANGELOG.txt ergaenzen (siehe dort). Wird im Dashboard (Kopfzeile
 # rechts) angezeigt, damit erkennbar ist, welcher Stand gerade laeuft.
-APP_VERSION = "1.9.4"
+APP_VERSION = "1.9.5"
 
 CONFIG_FILENAME = "AstroLogbuch_config.json"
 ARCHIVE_FILENAME = "AstroLogbuch_archive.json"
@@ -164,6 +175,8 @@ LATITUDE = DEFAULT_CONFIG["latitude"]
 EXCLUDE_FOLDER_NAMES = set(DEFAULT_CONFIG["exclude_folder_names"]) | ALWAYS_EXCLUDED_FOLDER_NAMES
 SHOW_THUMBNAILS = DEFAULT_CONFIG["show_thumbnails"]
 PREVIEW_OVERRIDES = dict(DEFAULT_CONFIG["preview_overrides"])
+VIEW_MODE = DEFAULT_CONFIG["view_mode"]
+FOCUS_OVERRIDES = dict(DEFAULT_CONFIG["focus_overrides"])
 
 # Optional: Ordner, die eigentlich zu einem anderen Projekt gehoeren
 # (z. B. alte, falsch einsortierte Zwischenordner), zusammenfuehren.
@@ -179,9 +192,10 @@ MERGE_INTO = {
 
 # 160 px reichte fuer die 88-px-Tabellenminiatur, ist aber in der
 # Kartenansicht (Karten ca. 300-500 px breit, auf HiDPI-Bildschirmen doppelt
-# so viele Bildpunkte) sichtbar pixelig - Nutzerrueckmeldung. 800 px laesst
-# die Karten auch auf grossen Bildschirmen scharf wirken.
-THUMBNAIL_MAX_PX = 800
+# so viele Bildpunkte) sichtbar pixelig - Nutzerrueckmeldung. Auf breiten
+# Bildschirmen werden die Karten bis ca. 600-900 px breit (siehe
+# .cards-grid), 1200 px haelt sie dort scharf.
+THUMBNAIL_MAX_PX = 1200
 THUMBNAIL_JPEG_QUALITY = 80
 # Notbremse fuer make_thumbnail(): Oeffnet/liest die Bilddatei tatsaechlich
 # (nicht nur Metadaten) - genau das kann ein Echtzeit-Virenschutz am
@@ -248,7 +262,7 @@ def apply_config(cfg):
     verwendeten Variablen. Wird beim Start und nach jedem Speichern der
     Einstellungen im Programmfenster aufgerufen."""
     global ROOT_FOLDER, LATITUDE, EXCLUDE_FOLDER_NAMES, CAMERA_MAP, \
-        FILTER_MAP, CALIB_WORDS, SHOW_THUMBNAILS, ONLINE_LOOKUP_ENABLED, PREVIEW_OVERRIDES
+        FILTER_MAP, CALIB_WORDS, SHOW_THUMBNAILS, ONLINE_LOOKUP_ENABLED, PREVIEW_OVERRIDES, VIEW_MODE, FOCUS_OVERRIDES
     ROOT_FOLDER = str(cfg.get("root_folder") or "")
     try:
         LATITUDE = float(cfg.get("latitude", DEFAULT_CONFIG["latitude"]))
@@ -270,6 +284,9 @@ def apply_config(cfg):
     ONLINE_LOOKUP_ENABLED = bool(cfg.get("online_lookup_enabled", True))
     overrides = cfg.get("preview_overrides", {})
     PREVIEW_OVERRIDES = dict(overrides) if isinstance(overrides, dict) else {}
+    VIEW_MODE = "cards" if cfg.get("view_mode") == "cards" else "table"
+    focus = cfg.get("focus_overrides", {})
+    FOCUS_OVERRIDES = dict(focus) if isinstance(focus, dict) else {}
 
 
 # Objekt-Katalog: Namensfragment (klein geschrieben, ohne Sonderzeichen-Sorgen)
@@ -15408,7 +15425,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
      Textfeld darunter. Vorher lag der gesamte Text ueber dem Bild, das Bild
      war kaum noch zu sehen (Nutzerrueckmeldung). Farbiger linker Rand =
      Status. */
-  .cards-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:16px; padding:16px; }
+  /* Spaltenzahl: mindestens 310 px je Karte (schmale Fenster: 3, 2, 1
+     Spalten wie bisher), aber nie mehr als 4 - auf breiten Bildschirmen
+     waechst die Karte stattdessen mit (Mindestbreite = Viertel der
+     Gridbreite, -49px = 3 Luecken a 16px plus 1px Reserve gegen
+     Rundungsfehler). */
+  .cards-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(max(310px, calc((100% - 49px) / 4)),1fr)); gap:16px; padding:16px; }
+  /* In der Kartenansicht darf die Seite die volle Fensterbreite nutzen
+     (sonst bleibt auf grossen Bildschirmen ueber 1600 px Rand frei); die
+     Obergrenze verhindert absurd grosse Karten auf extremen Ultrawide-
+     Monitoren. */
+  body.view-cards .wrap{ max-width:2800px; }
   .pcard{ position:relative; border-radius:12px; overflow:hidden; background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--neutral); display:flex; flex-direction:column; }
   .pcard.has-path{ cursor:pointer; }
   .pcard.st-done{ border-left-color:var(--good); }
@@ -15417,13 +15444,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .pcard:hover{ border-color:var(--accent); box-shadow:var(--shadow); }
   .pcard-media{ position:relative; aspect-ratio:16/10; background:var(--surface-3); overflow:hidden; }
   .pcard-img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .focus-stage{ position:relative; display:inline-block; line-height:0; overflow:hidden; border-radius:8px; cursor:crosshair; touch-action:none; max-width:100%; }
+  .focus-stage img{ display:block; max-width:100%; max-height:62vh; user-select:none; -webkit-user-drag:none; pointer-events:none; }
+  .focus-frame{ position:absolute; border:2px solid var(--accent); box-shadow:0 0 0 9999px rgba(0,0,0,.55); pointer-events:none; box-sizing:border-box; }
   .pcard-ph{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:40px; color:var(--text-faint); }
   .pcard-shade{ position:absolute; left:0; right:0; bottom:0; height:42%; background:linear-gradient(to bottom, rgba(8,10,16,0) 0%, rgba(8,10,16,.72) 100%); pointer-events:none; }
   .pcard-status{ position:absolute; top:9px; left:10px; display:flex; }
   .pcard .pill{ background:rgba(20,24,34,.8) !important; backdrop-filter:blur(2px); font-size:11px; padding:2px 8px; }
   .pcard-over{ position:absolute; left:12px; right:12px; bottom:9px; display:flex; align-items:flex-end; justify-content:space-between; gap:10px; color:#f4f4ef; pointer-events:none; }
-  .pcard-name{ font-family:'IBM Plex Mono',monospace; font-size:17px; font-weight:600; line-height:1.2; text-shadow:0 1px 4px rgba(0,0,0,.7); }
-  .pcard-hours{ font-family:'IBM Plex Mono',monospace; font-size:24px; font-weight:600; color:#b3b0ff; line-height:1; white-space:nowrap; text-shadow:0 1px 4px rgba(0,0,0,.7); }
+  .pcard-name{ font-family:'IBM Plex Mono',monospace; font-size:clamp(17px,.95vw,23px); font-weight:600; line-height:1.2; text-shadow:0 1px 4px rgba(0,0,0,.7); }
+  .pcard-hours{ font-family:'IBM Plex Mono',monospace; font-size:clamp(24px,1.4vw,34px); font-weight:600; color:#b3b0ff; line-height:1; white-space:nowrap; text-shadow:0 1px 4px rgba(0,0,0,.7); }
   .pcard-hours small{ font-size:12px; color:#ddd; font-weight:400; margin-left:2px; }
   .pcard-body{ padding:10px 14px 12px; display:flex; flex-direction:column; gap:7px; }
   .pcard-cat{ align-self:flex-start; font-size:11px; padding:2px 8px; border-radius:999px; background:var(--surface-3); color:var(--text-dim); font-family:'IBM Plex Mono',monospace; white-space:nowrap; }
@@ -15441,6 +15471,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .pcard.row-flash{ animation:rowFlash 1.6s ease; }
 
   /* Einstellungen: Zahnrad-Knopf im Header, Panel als Overlay darueber */
+  .ver-link{ cursor:pointer; border-bottom:1px dotted var(--text-faint); }
+  .ver-link:hover, .ver-link:focus{ color:var(--accent); border-bottom-color:var(--accent); outline:none; }
+  .changelog-body{ max-height:62vh; overflow-y:auto; padding-right:8px; }
+  .changelog-body h3{ font-family:'IBM Plex Mono',monospace; font-size:15px; margin:18px 0 6px; padding-top:12px; border-top:1px solid var(--border-soft); }
+  .changelog-body h3:first-child{ margin-top:0; padding-top:0; border-top:none; }
+  .changelog-body h3 small{ font-weight:400; color:var(--text-faint); font-size:12px; margin-left:6px; }
+  .changelog-body .cl-current{ display:inline-block; font-family:'IBM Plex Sans',sans-serif; font-size:11px; font-weight:600; padding:1px 8px; border-radius:999px; background:var(--accent-soft); color:var(--accent); margin-left:8px; }
+  .changelog-body ul{ margin:6px 0 0; padding-left:20px; }
+  .changelog-body li{ margin:0 0 6px; font-size:13px; color:var(--text-dim); line-height:1.5; }
+  .changelog-body .cl-note{ font-size:12px; color:var(--text-faint); font-style:italic; margin:2px 0 4px; }
+  .changelog-body .cl-missing{ color:var(--text-faint); font-size:13px; }
   .gear-btn{ margin-top:8px; width:34px; height:34px; border-radius:9px; border:1px solid var(--border);
     background:var(--surface); color:var(--text-dim); font-size:17px; cursor:pointer; line-height:1; }
   .gear-btn:hover{ border-color:var(--accent); color:var(--accent); }
@@ -15621,7 +15662,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <div>%%ROOT_FOLDER%% &middot; Lokaler Scan</div>
       <div><b>Stand:</b> %%TIMESTAMP%%</div>
       <div>Standort: %%LATITUDE%%&deg; N</div>
-      <div>AstroLogbuch v%%APP_VERSION%%</div>
+      <div><span class="ver-link" id="versionLink" role="button" tabindex="0" title="Änderungsprotokoll anzeigen">AstroLogbuch v%%APP_VERSION%%</span></div>
       <button class="gear-btn" id="settingsBtn" title="Einstellungen">&#9881;</button>
     </div>
   </header>
@@ -15708,6 +15749,29 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <div id="previewPickerGrid" class="preview-picker-grid"></div>
       <div class="settings-actions">
         <button class="btn" id="closePreviewPickerBtn" type="button">Abbrechen</button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay" id="changelogOverlay" hidden>
+    <div class="settings-panel" style="max-width:760px;">
+      <h2>Änderungsprotokoll</h2>
+      <div class="changelog-body" id="changelogBody"></div>
+      <div class="settings-actions">
+        <button class="btn primary" id="changelogCloseBtn" type="button">Schließen</button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay" id="focusOverlay" hidden>
+    <div class="settings-panel" style="max-width:760px;">
+      <h2>Bildausschnitt wählen</h2>
+      <p class="hint" id="focusHint"></p>
+      <div style="text-align:center;">
+        <div class="focus-stage" id="focusStage"><img id="focusImg" alt=""><div class="focus-frame" id="focusFrame"></div></div>
+      </div>
+      <div class="settings-actions">
+        <button class="btn" id="focusAutoBtn" type="button" title="Manuelle Wahl entfernen, der Ausschnitt wird wieder automatisch bestimmt">Automatisch</button>
+        <button class="btn" id="focusCancelBtn" type="button">Abbrechen</button>
+        <button class="btn primary" id="focusSaveBtn" type="button">Übernehmen</button>
       </div>
     </div>
   </div>
@@ -15831,7 +15895,11 @@ const MONTHS_DE = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt",
 let state = { status:"all", cat:"all", q:"", sortKey:"lastModified", sortDir:-1, previewMonth: new Date().getMonth()+1, hideFinishedNow:true, view:"table" };
 // Gewaehlte Ansicht (Tabelle/Karten) merkt sich der Browser lokal; ein
 // Fehlschlag (z. B. gesperrter Speicher) ist unkritisch, dann gilt "table".
-try{ const v = localStorage.getItem("astrologbuch_view"); if(v==="cards"||v==="table") state.view = v; }catch(e){}
+// Startansicht kommt aus der Config (siehe set_view_mode() im Python-Teil).
+// localStorage dient nur dem Browser-Fallback ohne pywebview, dort gibt es
+// keine Api zum Speichern.
+state.view = "%%VIEW_MODE%%" === "cards" ? "cards" : "table";
+if(!window.pywebview){ try{ const v = localStorage.getItem("astrologbuch_view"); if(v==="cards"||v==="table") state.view = v; }catch(e){} }
 
 // Kartenansicht: Filter-Chips mit Stunden je Filter. Die Stunden werden aus
 // der bereits vorhandenen Textzusammenfassung ("Ha 12x300s · R 6x180s")
@@ -15861,6 +15929,231 @@ function relDays(ts){
   if(months<24) return `vor ${months} Monaten`;
   return `vor ${Math.floor(days/365.25)} Jahren`;
 }
+// Bildausschnitt der Kartenansicht: Der Bildbereich einer Karte ist immer
+// 16:10 (CARD_RATIO) und schneidet das Vorschaubild per object-fit:cover zu.
+// Bei Hochformat blieb dabei nur ein mittiger Streifen sichtbar. Deshalb wird
+// der Ausschnitt auf das Hauptmotiv gelegt: automatisch (autoFocus(), direkt
+// aus dem bereits geladenen Vorschaubild berechnet - so geht es auch fuer
+// archivierte und erfasste Projekte ohne neu zu erzeugen) oder von Hand
+// (FOCUS, aus der Config, siehe set_focus() im Python-Teil).
+const CARD_RATIO = 1.6;
+let FOCUS = %%FOCUS_JSON%%;
+const autoFocusMemo = {};
+function focusKey(d){ return d.path || ("archiv:" + d.name); }
+
+function boxBlur(src, w, h, r){
+  if(r < 1) return src;
+  const tmp = new Float32Array(w*h), out = new Float32Array(w*h);
+  for(let y=0; y<h; y++){
+    for(let x=0; x<w; x++){
+      let sum=0, n=0;
+      for(let k=-r; k<=r; k++){ const xx=x+k; if(xx>=0 && xx<w){ sum+=src[y*w+xx]; n++; } }
+      tmp[y*w+x] = sum/n;
+    }
+  }
+  for(let y=0; y<h; y++){
+    for(let x=0; x<w; x++){
+      let sum=0, n=0;
+      for(let k=-r; k<=r; k++){ const yy=y+k; if(yy>=0 && yy<h){ sum+=tmp[yy*w+x]; n++; } }
+      out[y*w+x] = sum/n;
+    }
+  }
+  return out;
+}
+// Fenster der Laenge vis*n entlang einer Achse mit der groessten
+// "Interessantheits"-Summe; leichte Bevorzugung der Mitte, damit bei flachem
+// Verlauf nicht an den Rand gesprungen wird. Gibt den Mittelpunkt (0..1) zurueck.
+function bestWindow(prof, n, vis){
+  const L = Math.max(1, Math.min(n, Math.round(vis*n)));
+  const pre = new Float32Array(n+1);
+  for(let i=0; i<n; i++) pre[i+1] = pre[i] + prof[i];
+  let bestScore=-1, bestS=0;
+  for(let s=0; s+L<=n; s++){
+    const sum = pre[s+L] - pre[s];
+    const center = (s + L/2) / n;
+    const score = sum * (1 - 0.1 * Math.abs(center - 0.5) * 2);
+    if(score > bestScore){ bestScore = score; bestS = s; }
+  }
+  return (bestS + L/2) / n;
+}
+function autoFocus(img){
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  if(!iw || !ih) return null;
+  const r = iw/ih;
+  const S = 120;
+  const w = r >= 1 ? S : Math.max(8, Math.round(S*r));
+  const h = r >= 1 ? Math.max(8, Math.round(S/r)) : S;
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext("2d", {willReadFrequently:true});
+  ctx.drawImage(img, 0, 0, w, h);
+  let px;
+  try{ px = ctx.getImageData(0, 0, w, h).data; }catch(e){ return null; }
+  const lum = new Float32Array(w*h);
+  for(let i=0; i<w*h; i++) lum[i] = 0.299*px[4*i] + 0.587*px[4*i+1] + 0.114*px[4*i+2];
+  // Leicht weichzeichnen (Einzelsterne ausblenden); Himmelshintergrund = 25. Perzentil
+  const small = boxBlur(lum, w, h, 2);
+  const big = boxBlur(lum, w, h, Math.max(2, Math.round(Math.max(w,h)/8)));
+  const sorted = Float32Array.from(small).sort();
+  const bg = sorted[Math.floor(sorted.length*0.25)];
+  const interest = new Float32Array(w*h);
+  for(let i=0; i<w*h; i++) interest[i] = Math.max(0, small[i]-bg) + 1.5*Math.max(0, small[i]-big[i]);
+  let fx = 0.5, fy = 0.5;
+  if(r < CARD_RATIO){
+    const rows = new Float32Array(h);
+    for(let y=0; y<h; y++){ let s=0; for(let x=0; x<w; x++) s+=interest[y*w+x]; rows[y]=s; }
+    fy = bestWindow(rows, h, r/CARD_RATIO);
+  } else if(r > CARD_RATIO){
+    const cols = new Float32Array(w);
+    for(let x=0; x<w; x++){ let s=0; for(let y=0; y<h; y++) s+=interest[y*w+x]; cols[x]=s; }
+    fx = bestWindow(cols, w, CARD_RATIO/r);
+  }
+  return [fx, fy];
+}
+// Mittelpunkt (0..1) -> CSS-object-position (Prozent) fuer ein Bild mit Format r
+function focusToPos(f, r){
+  let px = 50, py = 50;
+  if(r < CARD_RATIO){
+    const v = r/CARD_RATIO, y0 = Math.min(1-v, Math.max(0, f[1]-v/2));
+    py = (1-v) > 0 ? y0/(1-v)*100 : 50;
+  } else if(r > CARD_RATIO){
+    const v = CARD_RATIO/r, x0 = Math.min(1-v, Math.max(0, f[0]-v/2));
+    px = (1-v) > 0 ? x0/(1-v)*100 : 50;
+  }
+  return `${px.toFixed(1)}% ${py.toFixed(1)}%`;
+}
+function applyCardFocus(img){
+  if(!img.naturalHeight) return;
+  const r = img.naturalWidth / img.naturalHeight;
+  if(Math.abs(r - CARD_RATIO) < 0.04) return; // fuellt die Karte ohnehin
+  const key = decodeURIComponent(img.dataset.key || "");
+  let f = FOCUS[key];
+  if(!f){
+    if(!(key in autoFocusMemo)) autoFocusMemo[key] = autoFocus(img);
+    f = autoFocusMemo[key];
+  }
+  if(f) img.style.objectPosition = focusToPos(f, r);
+}
+
+// Aenderungsprotokoll: Klick auf die Versionsnummer oben rechts. Der Text
+// stammt aus CHANGELOG.txt (siehe load_changelog_text() im Python-Teil) und
+// wird hier in Versionsabschnitte mit Aufzaehlung zerlegt: Kopfzeile
+// "vX.Y.Z - Datum", Punkte beginnen mit "- ", eingerueckte Folgezeilen
+// gehoeren zum vorherigen Punkt.
+const CHANGELOG_TEXT = %%CHANGELOG_JSON%%;
+function escHtml(t){ return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function parseChangelog(txt){
+  const versions = [];
+  let cur = null;
+  for(const raw of txt.replace(/\r/g,"").split("\n")){
+    const hm = raw.match(/^v(\d+\.\d+\.\d+\S*)\s+-\s+(\S+)\s*(.*)$/);
+    if(hm){ cur = {ver:hm[1], date:hm[2], note:hm[3].trim(), items:[], intro:[]}; versions.push(cur); continue; }
+    if(!cur || /^-{3,}\s*$/.test(raw) || !raw.trim()) continue;
+    const bm = raw.match(/^- (.*)$/);
+    if(bm){ cur.items.push(bm[1].trim()); continue; }
+    if(cur.items.length) cur.items[cur.items.length-1] += " " + raw.trim();
+    else cur.intro.push(raw.trim());
+  }
+  return versions;
+}
+function renderChangelog(){
+  const body = document.getElementById("changelogBody");
+  const versions = parseChangelog(CHANGELOG_TEXT || "");
+  if(!versions.length){
+    body.innerHTML = '<p class="cl-missing">Das Änderungsprotokoll (CHANGELOG.txt) wurde nicht gefunden.</p>';
+    return;
+  }
+  const appVer = "%%APP_VERSION%%";
+  body.innerHTML = versions.map(v=>{
+    const cur = v.ver === appVer ? '<span class="cl-current">diese Version</span>' : "";
+    const note = (v.note ? `<div class="cl-note">${escHtml(v.note)}</div>` : "")
+      + v.intro.map(t=>`<div class="cl-note">${escHtml(t)}</div>`).join("");
+    return `<h3>v${escHtml(v.ver)}<small>${escHtml(v.date)}</small>${cur}</h3>${note}`
+      + (v.items.length ? `<ul>${v.items.map(i=>`<li>${escHtml(i)}</li>`).join("")}</ul>` : "");
+  }).join("");
+}
+function openChangelog(){
+  renderChangelog();
+  document.getElementById("changelogOverlay").hidden = false;
+  document.getElementById("changelogBody").scrollTop = 0;
+}
+function closeChangelog(){ document.getElementById("changelogOverlay").hidden = true; }
+document.getElementById("versionLink").addEventListener("click", openChangelog);
+document.getElementById("versionLink").addEventListener("keydown", e=>{ if(e.key==="Enter" || e.key===" "){ e.preventDefault(); openChangelog(); } });
+document.getElementById("changelogCloseBtn").addEventListener("click", closeChangelog);
+document.getElementById("changelogOverlay").addEventListener("click", e=>{ if(e.target.id === "changelogOverlay") closeChangelog(); });
+document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !document.getElementById("changelogOverlay").hidden) closeChangelog(); });
+
+// Auswahlfenster fuer den manuellen Ausschnitt ("Ausschnitt" beim Ueberfahren
+// einer Karte): Klick oder Ziehen im Bild verschiebt den Rahmen.
+const focusOverlay = document.getElementById("focusOverlay");
+const focusStage = document.getElementById("focusStage");
+const focusImg = document.getElementById("focusImg");
+const focusFrame = document.getElementById("focusFrame");
+const focusHint = document.getElementById("focusHint");
+let focusState = null;
+function updateFocusFrame(){
+  const {r, f} = focusState;
+  const vw = r > CARD_RATIO ? CARD_RATIO/r : 1;
+  const vh = r < CARD_RATIO ? r/CARD_RATIO : 1;
+  const x0 = Math.min(1-vw, Math.max(0, f[0]-vw/2));
+  const y0 = Math.min(1-vh, Math.max(0, f[1]-vh/2));
+  focusFrame.style.left = (x0*100) + "%";
+  focusFrame.style.top = (y0*100) + "%";
+  focusFrame.style.width = (vw*100) + "%";
+  focusFrame.style.height = (vh*100) + "%";
+}
+function closeFocusPicker(){ focusOverlay.hidden = true; focusState = null; }
+function openFocusPicker(d){
+  if(!d.thumb) return;
+  const key = focusKey(d);
+  focusOverlay.hidden = false;
+  focusHint.textContent = "Lade Bild …";
+  focusImg.onload = ()=>{
+    const r = focusImg.naturalWidth / focusImg.naturalHeight;
+    const cur = FOCUS[key] || (key in autoFocusMemo ? autoFocusMemo[key] : null) || autoFocus(focusImg) || [0.5, 0.5];
+    focusState = {key, r, f: cur.slice(), manual: !!FOCUS[key], changed: false};
+    const crops = Math.abs(r - CARD_RATIO) >= 0.04;
+    focusFrame.style.display = crops ? "" : "none";
+    focusHint.textContent = crops
+      ? "Klicke oder ziehe im Bild: Der helle Rahmen zeigt, welcher Ausschnitt auf der Karte sichtbar ist."
+      : "Dieses Bild hat bereits das Format der Karte, hier gibt es nichts zu verschieben.";
+    if(crops) updateFocusFrame();
+  };
+  focusImg.src = d.thumb;
+}
+function focusFromPointer(e){
+  if(!focusState) return;
+  const rect = focusStage.getBoundingClientRect();
+  focusState.f = [
+    Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
+    Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
+  ];
+  focusState.changed = true;
+  updateFocusFrame();
+}
+let focusDragging = false;
+focusStage.addEventListener("pointerdown", e=>{ focusDragging = true; focusStage.setPointerCapture(e.pointerId); focusFromPointer(e); });
+focusStage.addEventListener("pointermove", e=>{ if(focusDragging) focusFromPointer(e); });
+focusStage.addEventListener("pointerup", ()=>{ focusDragging = false; });
+function saveFocus(key, f){
+  const hasApi = !!(window.pywebview && window.pywebview.api && window.pywebview.api.set_focus);
+  if(f){ FOCUS[key] = f; } else { delete FOCUS[key]; }
+  delete autoFocusMemo[key];
+  if(hasApi) window.pywebview.api.set_focus(key, f ? f[0] : null, f ? f[1] : null);
+  closeFocusPicker();
+  render();
+}
+document.getElementById("focusSaveBtn").addEventListener("click", ()=>{
+  if(!focusState) return;
+  if(focusState.changed) saveFocus(focusState.key, focusState.f); else closeFocusPicker();
+});
+document.getElementById("focusAutoBtn").addEventListener("click", ()=>{
+  if(focusState) saveFocus(focusState.key, null);
+});
+document.getElementById("focusCancelBtn").addEventListener("click", closeFocusPicker);
+focusOverlay.addEventListener("click", e=>{ if(e.target === focusOverlay) closeFocusPicker(); });
+
 function cardHtml(d){
   const meta = STATUS_META[d.status];
   const stCls = meta.cls==="done" ? "st-done" : meta.cls==="open" ? "st-warn" : meta.cls==="unclear" ? "st-bad" : "";
@@ -15874,10 +16167,12 @@ function cardHtml(d){
   const cam = d.cameras && d.cameras!=="–" ? `<div class="pcard-cam">${d.cameras}</div>` : "";
   const subs = [d.group?`Gruppe: ${d.group}`:"", d.snapshotLabel?`Platte: ${d.snapshotLabel}`:"", d.note||""].filter(Boolean)
     .map(s=>`<div class="pcard-sub">${s}</div>`).join("");
-  const img = d.thumb ? `<img class="pcard-img" src="${d.thumb}" alt="" loading="lazy">` : `<div class="pcard-ph">&#9729;</div>`;
-  const actions = (d.path ? `<button type="button" data-act="pick" title="Vorschaubild wählen">Bild</button>` : "")
+  const key = encodeURIComponent(focusKey(d));
+  const img = d.thumb ? `<img class="pcard-img" src="${d.thumb}" alt="" loading="lazy" data-key="${key}" onload="applyCardFocus(this)">` : `<div class="pcard-ph">&#9729;</div>`;
+  const actions = (d.thumb ? `<button type="button" data-act="focus" title="Sichtbaren Bildausschnitt der Karte festlegen">Ausschnitt</button>` : "")
+    + (d.path ? `<button type="button" data-act="pick" title="Vorschaubild wählen">Bild</button>` : "")
     + (d.status==="archived" ? `<button type="button" data-act="del" data-name="${encodeURIComponent(d.name)}" title="Archiv-Eintrag entfernen (löscht keine echten Dateien)">&times;</button>` : "");
-  return `<div class="pcard ${stCls}${d.path?" has-path":""}"${d.path?` data-path="${encodeURIComponent(d.path)}" title="Klick öffnet den Ordner"`:""}>
+  return `<div class="pcard ${stCls}${d.path?" has-path":""}" data-key="${key}"${d.path?` data-path="${encodeURIComponent(d.path)}" title="Klick öffnet den Ordner"`:""}>
     <div class="pcard-media">
       ${img}<div class="pcard-shade"></div>
       <div class="pcard-status"><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span></div>
@@ -16242,7 +16537,11 @@ document.getElementById("searchBox").addEventListener("input", e=>{ state.q=e.ta
 document.getElementById("viewToggle").addEventListener("click", e=>{
   const b = e.target.closest("button[data-view]"); if(!b) return;
   state.view = b.dataset.view;
-  try{ localStorage.setItem("astrologbuch_view", state.view); }catch(err){}
+  if(window.pywebview && window.pywebview.api && window.pywebview.api.set_view_mode){
+    window.pywebview.api.set_view_mode(state.view);
+  } else {
+    try{ localStorage.setItem("astrologbuch_view", state.view); }catch(err){}
+  }
   render();
 });
 document.getElementById("cardSort").addEventListener("change", e=>{
@@ -16255,6 +16554,10 @@ document.getElementById("cards").addEventListener("click", e=>{
   const act = e.target.closest("button[data-act]");
   const card = e.target.closest(".pcard");
   if(act){
+    if(act.dataset.act==="focus" && card){
+      const d = DATA.find(x=>focusKey(x) === decodeURIComponent(card.dataset.key));
+      if(d) openFocusPicker(d);
+    }
     if(act.dataset.act==="pick" && card && card.dataset.path) openPreviewPicker(decodeURIComponent(card.dataset.path));
     if(act.dataset.act==="del"){
       const name = decodeURIComponent(act.dataset.name);
@@ -16628,6 +16931,30 @@ document.getElementById("saveSettingsBtn").addEventListener("click", ()=>{
 """
 
 
+CHANGELOG_FILENAME = "CHANGELOG.txt"
+
+
+def load_changelog_text():
+    """Liest CHANGELOG.txt fuer die Anzeige im Programm (Klick auf die
+    Versionsnummer oben rechts). Als gebaute EXE liegt die Datei im
+    PyInstaller-Paket (--add-data "CHANGELOG.txt;.", siehe ANLEITUNG.txt,
+    Ordner sys._MEIPASS); als Skript neben astro_dashboard.py. Fehlt sie,
+    zeigt die Seite stattdessen einen Hinweis."""
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(meipass)
+    candidates.append(os.path.dirname(os.path.abspath(__file__)))
+    candidates.append(os.path.dirname(os.path.abspath(sys.argv[0])))
+    for folder in candidates:
+        try:
+            with open(os.path.join(folder, CHANGELOG_FILENAME), "r", encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except OSError:
+            continue
+    return ""
+
+
 def build_dashboard_html(projects, root_folder):
     from datetime import datetime
     out = HTML_TEMPLATE
@@ -16636,6 +16963,11 @@ def build_dashboard_html(projects, root_folder):
     out = out.replace("%%TIMESTAMP%%", datetime.now().strftime("%d.%m.%Y %H:%M"))
     out = out.replace("%%LATITUDE%%", str(LATITUDE))
     out = out.replace("%%APP_VERSION%%", APP_VERSION)
+    out = out.replace("%%VIEW_MODE%%", VIEW_MODE)
+    # "</" wird maskiert, damit der Text das <script>-Element nicht beenden kann
+    out = out.replace("%%CHANGELOG_JSON%%",
+                      json.dumps(load_changelog_text(), ensure_ascii=False).replace("</", "<\\/"))
+    out = out.replace("%%FOCUS_JSON%%", json.dumps(FOCUS_OVERRIDES, ensure_ascii=False))
     out = out.replace("%%DATA_JSON%%", json.dumps(projects, ensure_ascii=False))
     out = out.replace("%%LIGHT_FOLDER_NAMES_JSON%%",
                       json.dumps(sorted(LIGHT_FOLDER_NAMES), ensure_ascii=False))
@@ -16942,6 +17274,41 @@ class Api:
 
     def get_config(self):
         return load_config(self.config_path)
+
+    def set_focus(self, key, x=None, y=None):
+        """Speichert den manuell gesetzten Bildausschnitt der Kartenansicht
+        fuer ein Projekt (x, y = Mittelpunkt, 0..1) dauerhaft in der Config,
+        ohne neu einzulesen. x/y = None entfernt den Eintrag, dann gilt
+        wieder die automatische Berechnung."""
+        global FOCUS_OVERRIDES
+        key = str(key or "")
+        if not key:
+            return {"ok": False, "error": "Kein Projekt angegeben."}
+        cfg = load_config(self.config_path)
+        overrides = dict(cfg.get("focus_overrides") or {})
+        if x is None or y is None:
+            overrides.pop(key, None)
+        else:
+            try:
+                overrides[key] = [min(1.0, max(0.0, float(x))), min(1.0, max(0.0, float(y)))]
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "Ungültiger Ausschnitt."}
+        cfg["focus_overrides"] = overrides
+        save_config(self.config_path, cfg)
+        FOCUS_OVERRIDES = overrides
+        return {"ok": True}
+
+    def set_view_mode(self, mode):
+        """Merkt sich die gewaehlte Ansicht (Tabelle/Karten) dauerhaft in der
+        Config, ohne neu einzulesen. Ab dem naechsten Aufbau des Dashboards
+        (Start, Speichern, Aktualisieren) startet die Seite in dieser Ansicht."""
+        global VIEW_MODE
+        mode = "cards" if mode == "cards" else "table"
+        cfg = load_config(self.config_path)
+        cfg["view_mode"] = mode
+        save_config(self.config_path, cfg)
+        VIEW_MODE = mode
+        return {"ok": True}
 
     def resolve_place_latitude(self, place_name):
         """Wird vom "Koordinate suchen"-Knopf im Einstellungen-Panel

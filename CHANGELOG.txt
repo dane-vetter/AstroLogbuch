@@ -4,6 +4,43 @@ CHANGELOG - AstroLogbuch
 Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
 oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
 
+v1.9.5 - 2026-10-21
+--------------------
+- Behoben: Die gewaehlte Ansicht (Tabelle/Karten) ging bei jedem Neustart
+  verloren. Ursache: Sie lag im Browser-Speicher (localStorage), den das
+  Programmfenster (privater Modus, bei jedem Start anderer Port des lokalen
+  Servers) beim Beenden verwirft. Jetzt steht sie in
+  AstroLogbuch_config.json (Feld view_mode) und wird beim naechsten Start
+  wiederhergestellt.
+- Neu: Aenderungsprotokoll im Programm. Ein Klick auf die Versionsnummer
+  oben rechts oeffnet dieses Protokoll (alle Versionen, die laufende
+  markiert). Der Text kommt aus CHANGELOG.txt, die beim Bauen der EXE
+  mit eingepackt wird (--add-data "CHANGELOG.txt;.", siehe ANLEITUNG.txt).
+- Neu: Bildausschnitt der Kartenansicht. Der Bildbereich einer Karte ist
+  16:10 und schnitt Hochformat-Aufnahmen bisher auf einen mittigen Streifen
+  zu. Jetzt wird der sichtbare Ausschnitt automatisch auf das Hauptmotiv
+  gelegt (Berechnung direkt im Dashboard aus dem Vorschaubild: Himmels-
+  hintergrund abziehen, Einzelsterne ausblenden, hellstes Fenster in
+  Kartenform waehlen; funktioniert auch fuer archivierte und erfasste
+  Projekte). Von Hand ueberschreibbar: Beim Ueberfahren einer Karte
+  erscheint "Ausschnitt", dort wird der Rahmen per Klick/Ziehen gesetzt,
+  "Automatisch" entfernt die Wahl wieder. Gespeichert in
+  AstroLogbuch_config.json (focus_overrides).
+- Geaendert: Die Kartenansicht nutzt jetzt die volle Fensterbreite (bis
+  2800 px, vorher war die Seite auf 1600 px begrenzt, auf grossen
+  Bildschirmen blieb viel Rand). Die Spaltenzahl bleibt bei hoechstens 4,
+  stattdessen werden die Karten und damit die Vorschaubilder groesser;
+  Name und Stunden auf der Karte wachsen leicht mit. Die Tabellenansicht
+  bleibt unveraendert.
+- Geaendert: Vorschaubilder werden jetzt mit 1200 statt 800 Pixeln
+  Kantenlaenge erzeugt (in v1.9.4: 800), damit sie auch in breiten Karten
+  scharf bleiben. Der Zwischenspeicher erkennt die alte Aufloesung selbst,
+  beim ersten Start werden die Bilder einmalig neu erzeugt (dauert etwas
+  laenger, im Test mit 56 Projekten rund 25 Sekunden). Zwischenspeicher und
+  Dashboard werden dadurch groesser (je rund 9 statt 4 MB bei 56 Projekten).
+  Bereits archivierte Projekte, deren Ordner nicht mehr existiert, behalten
+  ihr altes kleines Bild.
+
 v1.9.4 - 2026-10-20
 --------------------
 - Neu: Kartenansicht. Neben der Suche gibt es einen Umschalter zwischen

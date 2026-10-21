@@ -96,7 +96,23 @@ in einem Textfeld darunter. Ein Klick auf die Karte oeffnet den Ordner, beim
 Ueberfahren erscheint oben rechts "Bild" fuer die Vorschaubild-Auswahl.
 Weil es in der Kartenansicht keine Spaltenkoepfe gibt, wird dort ueber
 eine Auswahlliste neben der Suche sortiert. Suche und Filter gelten in
-beiden Ansichten, die gewaehlte Ansicht merkt sich das Programm.
+beiden Ansichten, die gewaehlte Ansicht merkt sich das Programm (in
+AstroLogbuch_config.json) und stellt sie beim naechsten Start wieder her.
+In der Kartenansicht nutzt die Seite die volle Fensterbreite, bei bis zu
+vier Spalten; auf grossen Bildschirmen (z. B. im Vollbild) werden die
+Karten und damit die Vorschaubilder entsprechend groesser.
+
+Bildausschnitt: Der Bildbereich einer Karte hat das Format 16:10. Bei
+Hochformat-Aufnahmen schneidet das Programm deshalb Teile ab und waehlt den
+sichtbaren Ausschnitt automatisch dort, wo das Hauptmotiv liegt. Liegt
+die Automatik bei einem Bild daneben, kannst du den Ausschnitt selbst
+festlegen: Beim Ueberfahren der Karte erscheint oben rechts "Ausschnitt".
+Im Fenster zeigt ein heller Rahmen, was auf der Karte sichtbar ist; per
+Klick oder Ziehen im Bild verschiebst du ihn, "Uebernehmen" speichert die
+Wahl dauerhaft, "Automatisch" entfernt sie wieder.
+
+Aenderungsprotokoll: Ein Klick auf die Versionsnummer oben rechts
+("AstroLogbuch v...") zeigt alle Aenderungen je Version.
 
 Erfasste Ordner / externe Platten: Liegen deine Projekte auf mehreren
 externen Platten, die nicht immer angeschlossen sind, kannst du jede
@@ -622,14 +638,19 @@ oben) ist dieser Anhang nicht noetig.
    separate schwarze Konsolenfenster, siehe Hinweis dazu weiter oben bei
    "Falls es einmal hakt"):
 
-       pyinstaller --onefile --noconsole --icon=AstroLogbuch.ico --name AstroLogbuch astro_dashboard.py
+       pyinstaller --onefile --noconsole --icon=AstroLogbuch.ico --add-data "CHANGELOG.txt;." --name AstroLogbuch astro_dashboard.py
+
+   (--add-data packt die Datei CHANGELOG.txt mit in die EXE; sie wird
+   gebraucht, damit ein Klick auf die Versionsnummer oben rechts im
+   Dashboard das Aenderungsprotokoll zeigen kann. Ohne diesen Zusatz laeuft
+   das Programm trotzdem, zeigt dort aber nur einen Hinweis.)
 
 5. Das dauert eine Weile. Am Ende liegt im neu entstandenen Unterordner
    "dist" die Datei AstroLogbuch.exe. Falls die EXE startet, aber keine
    Bildvorschauen zeigt und auch keine Fehlermeldung dazu bringt, probier
    stattdessen:
 
-       pyinstaller --onefile --noconsole --icon=AstroLogbuch.ico --collect-all pillow --collect-all webview --name AstroLogbuch astro_dashboard.py
+       pyinstaller --onefile --noconsole --icon=AstroLogbuch.ico --add-data "CHANGELOG.txt;." --collect-all pillow --collect-all webview --name AstroLogbuch astro_dashboard.py
 
    Das bindet Pillow und pywebview vollstaendiger mit ein (pywebview
    bringt zwar einen eigenen PyInstaller-Baustein mit, der das
