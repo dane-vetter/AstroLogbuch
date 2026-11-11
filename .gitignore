@@ -4,6 +4,7 @@ AstroLogbuch_thumb_cache.json
 AstroLogbuch_object_cache.json
 AstroLogbuch_archive.json
 AstroLogbuch_snapshots.json
+AstroLogbuch_fits_cache.json
 
 # Generierte Ausgabe (wird bei jedem Lauf neu erzeugt)
 AstroLogbuch.html

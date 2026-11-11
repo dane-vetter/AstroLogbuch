@@ -4,6 +4,71 @@ CHANGELOG - AstroLogbuch
 Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
 oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
 
+v1.10.0 - 2026-11-11
+---------------------
+- Neu: Unterordner als eigene Projekte (Einstellungen, standardmaessig aus).
+  Fuer Projekte mit je einem Unterordner pro Nacht, Tag oder Brennweite
+  (typisch bei Kometen): Jeder Unterordner erscheint als eigene Zeile
+  "Komet / Unterordner" mit eigenen Stunden, Naechten, Filtern und
+  Vorschaubild. Gilt nur fuer die angekreuzten Typen (Vorgabe Komet, auch
+  Planet/Mond/Sonne) und nur bei mindestens zwei passenden Unterordnern;
+  Flats, Darks, Stack-Ordner, "Lights", leere und ausgeschlossene Ordner
+  zaehlen nie. Liegt genau ein Datums-/Sitzungsordner dazwischen
+  ("28.03.2024/LZOS_1200mm", "28.03.2024/TSQ_100"), wird eine Ebene tiefer
+  aufgeteilt. Status und Typ kommen vom Hauptordner ("Done" am Hauptordner
+  gilt fuer alle, "Done" nur am Unterordner nur fuer diesen). Der
+  Hauptordner bleibt nur dann als eigene Zeile, wenn er selbst Dateien oder
+  einen Stack-Ordner enthaelt; nichts wird doppelt gezaehlt. Bewusst nicht
+  fuer alle Projekte: normale Deep-Sky-Projekte haben fast immer
+  "NACHT_xx"-Unterordner, die zu EINEM Projekt gehoeren.
+- Neu: Projekte ausblenden, ohne Daten zu loeschen. Per Knopf (Auge in der
+  Tabelle, "Ausblenden" auf der Karte) oder ueber ein Wort im Ordnernamen
+  ("hidden", "ausgeblendet", "ignore", "ignoriert"; am Hauptordner gilt es
+  fuer alle Unterordner-Projekte). Ausgeblendete Projekte fehlen in
+  Tabelle, Karten und Statistik und werden nicht archiviert. Neuer
+  Statusfilter "Ausgeblendet" (erscheint, sobald es welche gibt) zeigt sie
+  und bietet "Einblenden"; dieselbe Liste steht in den Einstellungen.
+- Neu: FITS-Header als Ergaenzung zum Dateinamen. Gelesen wird nur der
+  Textkopf, nur wo der Name nicht reicht, mit Zwischenspeicher
+  (AstroLogbuch_fits_cache.json): Kamera aus INSTRUME, wenn der Name keine
+  nennt (statt "unbekannt (Farbe/OSC, vermutlich)" die tatsaechliche Kamera
+  inkl. Mono/Farbe); Aufnahmenacht aus DATE-OBS, wenn der Name kein Datum
+  hat; nicht erkannte FITS-Namen zaehlen als Light, wenn der Kopf "Light"
+  und eine Belichtungszeit nennt und es kein Summenbild ist.
+- Neu: Brennweite. Aus FOCALLEN (FITS) bzw. EXIF, als Angabe bei der
+  jeweiligen Kamera: "6200 (Mono) 20x (mit Filter, 578 mm)".
+- Neu: EXIF fuer Foto-RAWs und JPEGs. Canon-RAWs (CR3, CR2; auch NEF, ARW,
+  DNG) zaehlen jetzt als Aufnahmen mit Belichtungszeit, Kamera, Brennweite
+  und Aufnahmenacht aus dem EXIF - bisher standen sie nur als
+  "Rohaufnahmen ohne auswertbares Namensschema" da. Stunden daraus sind mit
+  "~" als ungefaehr markiert (der Dateiname verraet nicht, ob Darks/Flats
+  dazwischen liegen). JPEGs zaehlen nie als Aufnahmen, liefern aber Kamera
+  und Brennweite ("laut Bild-EXIF"), wenn sonst nichts bekannt ist. Der
+  erste Start nach dem Update liest die Metadaten einmalig ein (bei vielen
+  RAW-Dateien eine halbe Minute), danach kommt alles aus dem
+  Zwischenspeicher.
+- Neu: Light-Dateinamen ohne Zeitstempel ("Light_Neowise_120s_1x1_0001.fit",
+  auch mit "_0001_1") werden erkannt: Anzahl und Belichtungszeit aus dem
+  Namen, Datum und Kamera aus dem FITS-Kopf.
+- Neu: Zoom im Dialog "Bildausschnitt waehlen" (Mausrad, Plus/Minus, Regler,
+  1x bis 5x), um kleine Objekte auf der Karte groesser zu zeigen. Der Zoom
+  wird mit dem Ausschnitt gespeichert.
+- Geaendert: Kometen mit Bezeichnungen wie "C2017 K2", "C/2023 A3" oder
+  "12P" werden als Komet erkannt (vorher nur mit Stichworten wie "Komet",
+  "ZTF", "NEOWISE"; sonst "Nebel/Deep-Sky" mit sinnlosem
+  Beobachtungsfenster).
+- Geaendert: Foto-Kameras (Canon, Nikon, Sony, ...) stehen ohne den Zusatz
+  "(Farbe/OSC, vermutlich)".
+- Behoben: Manuell gewaehltes Vorschaubild und Bildausschnitt gingen
+  verloren, wenn ein Ordner mit " - Done" umbenannt wurde (die Wahl hing am
+  vollen Ordnerpfad; die Automatik nahm dann ein anderes Bild). Der
+  Schluessel ignoriert jetzt "Done"/"Fertig" in jedem Ordnernamen des Pfads,
+  bestehende Eintraege werden weiter erkannt.
+- Behoben: Bei der Unterordner-Aufteilung gilt ein Eintrag der
+  Ausschlussliste auch als ganzes Wort im Namen ("Blogartikel" schliesst
+  "_Blogartikel_Upload" aus); verwaiste Archiv-Eintraege solcher Ordner
+  werden automatisch entfernt.
+
 v1.9.5 - 2026-10-21
 --------------------
 - Behoben: Die gewaehlte Ansicht (Tabelle/Karten) ging bei jedem Neustart

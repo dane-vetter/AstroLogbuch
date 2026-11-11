@@ -109,7 +109,58 @@ die Automatik bei einem Bild daneben, kannst du den Ausschnitt selbst
 festlegen: Beim Ueberfahren der Karte erscheint oben rechts "Ausschnitt".
 Im Fenster zeigt ein heller Rahmen, was auf der Karte sichtbar ist; per
 Klick oder Ziehen im Bild verschiebst du ihn, "Uebernehmen" speichert die
-Wahl dauerhaft, "Automatisch" entfernt sie wieder.
+Wahl dauerhaft, "Automatisch" entfernt sie wieder. Ist das Objekt auf
+dem Bild klein, kannst du es auf der Karte vergroessern: Mit dem Mausrad
+(nach oben = hinein, nach unten = heraus; der Punkt unter dem Mauszeiger
+bleibt dabei stehen), den Plus-/Minus-Tasten oder dem Regler neben
+"Zoom" wird der Rahmen kleiner, und die Karte zeigt nur noch diesen
+Bereich. Der Zoom wird mit dem Ausschnitt gespeichert. Hinweis: Das
+Vorschaubild hat 1200 Pixel Kantenlaenge, bei starkem Zoom (ab etwa 3x)
+wird die Darstellung daher weicher.
+
+Unterordner als eigene Projekte: Hast du bei einem Projekt je einen
+Unterordner pro Nacht, Tag oder Brennweite (typisch bei Kometen, z. B.
+"C2022 E3 - ZTF" mit "1280mm - 21.01.23", "580mm - 21.01.23", ...), kannst
+du diese in den Einstellungen als eigene Zeilen listen lassen:
+Einstellungen (Zahnrad) -> "Unterordner als eigene Projekte listen" und
+darunter die Typen ankreuzen, fuer die das gelten soll (Vorgabe: Komet; es
+gibt auch Planet, Mond und Sonne). Jeder Unterordner erscheint dann als
+"Komet / Unterordnername" mit eigenen Stunden, Naechten, Filtern und
+Vorschaubild (liegen die Unterordner eine Ebene tiefer, etwa zwei Teleskope
+in einem Datumsordner "28.03.2024/LZOS_1200mm" und
+"28.03.2024/TSQ_100_Apo_580mm", wird dort aufgeteilt und die Zeile heisst
+"Komet / 28.03.2024 - LZOS_1200mm"; das gilt nur, wenn der einzige
+Unterordner ein Datums-/Sitzungsordner ist); Status (z. B. Fertig) und Typ kommen vom uebergeordneten
+Ordner. Bedingungen: Der Ordner muss zu einem angekreuzten Typ gehoeren und
+mindestens zwei passende Unterordner haben; Flats, Darks, Stack-Ordner,
+"Lights" und leere Ordner zaehlen nie, ebenso Unterordner, in deren Namen
+ein Eintrag aus "Ausgeschlossene Ordner" als ganzes Wort vorkommt (so
+schliesst "Blogartikel" auch "_Blogartikel_Upload" aus, "neu" aber nicht
+"Neumond"). Liegen im uebergeordneten Ordner
+zusaetzlich eigene Dateien (z. B. ein Gesamtergebnis) oder ein Stack-Ordner,
+bleibt er als eigene Zeile bestehen, ohne die Unterordner doppelt zu
+zaehlen. Normale Deep-Sky-Projekte mit "NACHT_..."-Ordnern werden bewusst
+nicht aufgespalten (Typ "Nebel/Deep-Sky" gibt es in der Auswahl nicht). Die
+Option ist standardmaessig aus. Hinweis: Auch Kometen mit Bezeichnungen wie
+"C2017 K2", "C/2023 A3" oder "12P" werden jetzt als Komet erkannt (vorher
+nur mit Stichworten wie "Komet", "ZTF", "NEOWISE").
+
+Projekte ausblenden: Ein Projekt, mit dem du nichts mehr anfangen kannst,
+dessen Daten du aber (noch) nicht loeschen willst, laesst sich ausblenden:
+In der Tabelle mit dem durchgestrichenen Auge neben dem Status, in der
+Kartenansicht mit "Ausblenden" (beim Ueberfahren der Karte oben rechts).
+Alternativ schreibst du eines der Woerter "hidden", "ausgeblendet",
+"ignore" oder "ignoriert" irgendwo in den Ordnernamen (wie sonst
+"Done"); bei einem Hauptordner gilt das fuer alle seine Unterordner-Projekte.
+Ausgeblendete Projekte erscheinen nicht mehr in Tabelle, Karten und
+Statistik, der Ordner selbst bleibt unveraendert. Ansehen und wieder
+einblenden: Sobald es ausgeblendete Projekte gibt, erscheint ueber der
+Tabelle der Statusfilter "Ausgeblendet"; dort steht bei jedem per Knopf
+ausgeblendeten Projekt "Einblenden" (auch in den Einstellungen im Bereich
+"Ausgeblendete Projekte"). Bei Projekten, die per Ordnername ausgeblendet
+sind, entfernst du dazu das Wort aus dem Ordnernamen. Die Wahl bleibt auch
+nach dem Umbenennen mit "Done" erhalten. Ausgeblendete Projekte werden nicht
+ins Archiv aufgenommen.
 
 Aenderungsprotokoll: Ein Klick auf die Versionsnummer oben rechts
 ("AstroLogbuch v...") zeigt alle Aenderungen je Version.
@@ -319,6 +370,53 @@ Projekt "Kamera: -" und auch "Filter/Aufnahmen" zeigt dann hoechstens die
 Stundenangabe aus dem Ordnernamen, keine Kamera- oder Filterdetails - das
 ist kein Fehler, sondern eine Grenze dieser rein dateinamen-basierten
 Auswertung.
+
+Ausnahme: Namen OHNE Zeitstempel in der Form
+Light_<Ziel>_<Belichtung>s_<Binning>_<Nr>.fit (z. B.
+"Light_Neowise_120s_1x1_0001.fit", optional mit einer zweiten Zahl dahinter
+wie "_0001_1"; Binning als "1x1" oder "Bin1") werden ebenfalls erkannt:
+Anzahl und Belichtungszeit (damit auch die Stunden) kommen aus dem Namen,
+Datum und Kamera sind darin nicht enthalten, die Kamera steht dann als
+"unbekannt". Kalibrierte oder registrierte Zwischendateien ("..._c.xisf")
+und Dateien wie "light_00001.fit" zaehlen weiterhin nicht. Canon-RAW-Dateien
+("IMG_0001.CR3") enthalten die Belichtungszeit nicht im Namen und bleiben
+deshalb ohne Stundenangabe.
+
+FITS-Header: Bei FITS-Dateien (.fit, .fits, .fts) liest das Programm
+zusaetzlich den Kopf der Datei (nur den Textkopf, nie die Bilddaten), und
+zwar nur dort, wo der Dateiname nicht reicht:
+- Kamera: Nennt der Dateiname keine Kamera, steht sie im Header
+  (INSTRUME, z. B. "ZWO ASI2600MC Pro"); je Ordner wird einmal nachgesehen.
+  Das ersetzt "unbekannt (Farbe/OSC, vermutlich)" durch die tatsaechliche
+  Kamera inklusive Mono/Farbe.
+- Aufnahmedatum: Fehlt der Zeitstempel im Namen, kommt die Aufnahmenacht aus
+  DATE-OBS (der Abend gibt der Nacht ihr Datum).
+- Belichtung: Wird ein FITS-Name nicht als Light erkannt, zaehlt die Datei
+  trotzdem, wenn der Header ausdruecklich "Light" als Bildtyp (IMAGETYP) und
+  eine Belichtungszeit (EXPTIME) nennt und es kein Summenbild ist.
+- Brennweite: Aus einigen Stichproben-Headern (FOCALLEN) steht sie als
+  "578 mm" bei der jeweiligen Kamera ("6200 (Mono) 20x (mit Filter, 578 mm)"),
+  damit sichtbar ist, welche Kamera an welcher Optik hing. Das ist die
+  Angabe der Aufnahmesoftware, nicht berechnet.
+Gelesene Header werden in AstroLogbuch_fits_cache.json neben der EXE
+zwischengespeichert (Pfad, Groesse, Aenderungszeit), der naechste Start oeffnet
+diese Dateien nicht erneut.
+
+EXIF (Foto-RAWs und JPEGs): Kameras mit RAW-Dateien wie "IMG_0001.CR3" oder
+.CR2 (auch .NEF, .ARW, .DNG) schreiben Belichtung, Kamera, Brennweite und
+Aufnahmezeit ins EXIF statt in den Dateinamen. Das Programm liest diese
+kleinen Metadaten (nie die Bilddaten) aus und rechnet die RAWs als
+Aufnahmen: Anzahl, Belichtungszeit, Kamera ("Canon EOS 80D"), Brennweite und
+Aufnahmenacht. Die Stunden daraus stehen mit "~" (ungefaehr), weil ein
+Dateiname nicht verraet, ob zwischen den Lights nicht doch Darks, Flats oder
+Testbilder liegen (Ordner mit Namen wie "Flats"/"Darks" zaehlen weiterhin
+nicht). Das gilt auch fuer RAWs in Ordnern wie "Stacking". JPEGs sind
+Ergebnisbilder und zaehlen nie als Aufnahmen; haben die Rohdaten eines
+Projekts aber keine Kamerainformation (z. B. nur JPEGs), steht stattdessen
+"Kamera (laut Bild-EXIF, 85 mm)" aus einigen Stichproben-JPEGs. Gelesene
+EXIF-Angaben liegen im selben Zwischenspeicher (AstroLogbuch_fits_cache.json);
+nur der allererste Start nach dem Update braucht dafuer einmalig laenger (bei
+mehr als tausend RAW-Dateien rund eine halbe Minute).
 
 Kamera-Rohcodes wie "2600" und "2600MC_RGB" werden anhand der Modellnummer
 automatisch zusammengefuehrt. Ob Mono oder Farbe/OSC dahintersteckt, wird

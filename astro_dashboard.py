@@ -78,6 +78,7 @@ import json
 import math
 import html
 import base64
+import struct
 import webbrowser
 import traceback
 import subprocess
@@ -145,10 +146,21 @@ DEFAULT_CONFIG = {
     "view_mode": "table",
     # Manuell gesetzter Bildausschnitt der Kartenansicht je Projekt:
     # Schluessel = Projektordnerpfad (bei archivierten Projekten ohne Ordner
-    # "archiv:<Name>"), Wert = [x, y] (Mittelpunkt des Ausschnitts, 0..1).
+    # "archiv:<Name>"), Wert = [x, y] (Mittelpunkt des Ausschnitts, 0..1),
+    # optional [x, y, zoom] (Zoomfaktor ab 1).
     # Fehlt ein Eintrag, berechnet die Seite den Ausschnitt selbst
     # (siehe autoFocus() im JS-Teil).
     "focus_overrides": {},
+    # Unterordner (Sessions/Tage/Brennweiten) als eigene Projekte listen.
+    # Bewusst nur fuer die hier genannten Typen (Standard: Kometen) und aus:
+    # normale Deep-Sky-Projekte haben fast immer "NACHT_xx"-Unterordner, die
+    # zum EINEN Projekt gehoeren und nie aufgespalten werden duerfen.
+    "split_subfolders": False,
+    "split_subfolder_categories": ["Komet"],
+    # Manuell ausgeblendete Projekte: Schluessel (siehe override_key()) ->
+    # Anzeigename. Die Ordner bleiben unveraendert, die Projekte tauchen nur
+    # nicht in Tabelle, Karten und Statistik auf (Einblenden: Einstellungen).
+    "hidden_projects": {},
 }
 
 # "astrologbuch" (der Ordner dieses Tools selbst) ist immer ausgeschlossen,
@@ -159,7 +171,7 @@ ALWAYS_EXCLUDED_FOLDER_NAMES = {"astrologbuch"}
 # Bei jeder inhaltlichen Aenderung erhoehen und einen Eintrag in
 # CHANGELOG.txt ergaenzen (siehe dort). Wird im Dashboard (Kopfzeile
 # rechts) angezeigt, damit erkennbar ist, welcher Stand gerade laeuft.
-APP_VERSION = "1.9.5"
+APP_VERSION = "1.10.0"
 
 CONFIG_FILENAME = "AstroLogbuch_config.json"
 ARCHIVE_FILENAME = "AstroLogbuch_archive.json"
@@ -177,6 +189,9 @@ SHOW_THUMBNAILS = DEFAULT_CONFIG["show_thumbnails"]
 PREVIEW_OVERRIDES = dict(DEFAULT_CONFIG["preview_overrides"])
 VIEW_MODE = DEFAULT_CONFIG["view_mode"]
 FOCUS_OVERRIDES = dict(DEFAULT_CONFIG["focus_overrides"])
+SPLIT_SUBFOLDERS = DEFAULT_CONFIG["split_subfolders"]
+SPLIT_SUBFOLDER_CATEGORIES = set(DEFAULT_CONFIG["split_subfolder_categories"])
+HIDDEN_PROJECTS = dict(DEFAULT_CONFIG["hidden_projects"])
 
 # Optional: Ordner, die eigentlich zu einem anderen Projekt gehoeren
 # (z. B. alte, falsch einsortierte Zwischenordner), zusammenfuehren.
@@ -262,7 +277,8 @@ def apply_config(cfg):
     verwendeten Variablen. Wird beim Start und nach jedem Speichern der
     Einstellungen im Programmfenster aufgerufen."""
     global ROOT_FOLDER, LATITUDE, EXCLUDE_FOLDER_NAMES, CAMERA_MAP, \
-        FILTER_MAP, CALIB_WORDS, SHOW_THUMBNAILS, ONLINE_LOOKUP_ENABLED, PREVIEW_OVERRIDES, VIEW_MODE, FOCUS_OVERRIDES
+        FILTER_MAP, CALIB_WORDS, SHOW_THUMBNAILS, ONLINE_LOOKUP_ENABLED, PREVIEW_OVERRIDES, VIEW_MODE, FOCUS_OVERRIDES, \
+        SPLIT_SUBFOLDERS, SPLIT_SUBFOLDER_CATEGORIES, HIDDEN_PROJECTS
     ROOT_FOLDER = str(cfg.get("root_folder") or "")
     try:
         LATITUDE = float(cfg.get("latitude", DEFAULT_CONFIG["latitude"]))
@@ -283,10 +299,14 @@ def apply_config(cfg):
     SHOW_THUMBNAILS = bool(cfg.get("show_thumbnails", True))
     ONLINE_LOOKUP_ENABLED = bool(cfg.get("online_lookup_enabled", True))
     overrides = cfg.get("preview_overrides", {})
-    PREVIEW_OVERRIDES = dict(overrides) if isinstance(overrides, dict) else {}
+    PREVIEW_OVERRIDES = canonical_overrides(overrides)
     VIEW_MODE = "cards" if cfg.get("view_mode") == "cards" else "table"
     focus = cfg.get("focus_overrides", {})
-    FOCUS_OVERRIDES = dict(focus) if isinstance(focus, dict) else {}
+    FOCUS_OVERRIDES = canonical_overrides(focus)
+    SPLIT_SUBFOLDERS = bool(cfg.get("split_subfolders", False))
+    cats = cfg.get("split_subfolder_categories", DEFAULT_CONFIG["split_subfolder_categories"])
+    SPLIT_SUBFOLDER_CATEGORIES = {str(c) for c in cats} if isinstance(cats, (list, tuple, set)) else set()
+    HIDDEN_PROJECTS = canonical_overrides(cfg.get("hidden_projects"))
 
 
 # Objekt-Katalog: Namensfragment (klein geschrieben, ohne Sonderzeichen-Sorgen)
@@ -13654,6 +13674,44 @@ def parse_light_fields(fn):
     return float(exp_match.group("exp")), tokens[ts_idx][:8], mid
 
 
+_BIN_FIELD_RE = re.compile(r'^(?:\d+x\d+|bin\d+)$', re.IGNORECASE)
+
+
+def parse_light_fields_no_timestamp(fn):
+    """Letzte Stufe fuer Light-Dateinamen OHNE Zeitstempel, wie sie z. B.
+    N.I.N.A./aeltere Aufnahmeprogramme schreiben:
+    "Light_C-2020 F3_60s_1x1_0001.fit" oder "Light_Neowise_120s_1x1_0001_1.fit"
+    (Objekt, Belichtung, Binning, laufende Nummer, bei Doppelungen noch ein
+    "_1" dahinter). Liefert (belichtung, None, "") - Datum und Kamera sind
+    aus dem Namen nicht ablesbar, die Belichtungszeit schon, und genau die
+    fehlte bisher komplett (Ergebnis: "Rohaufnahmen ohne auswertbares
+    Namensschema", keine Stunden, kein Filter).
+
+    Bewusst STRENG, damit Zwischendateien der Bildbearbeitung weiterhin
+    durchfallen ("light_00001.fit", "pp_light_00001.fit", kalibrierte/
+    registrierte Dateien wie "Light_..._0001_c.xisf"): verlangt werden
+    "Light" am Anfang, ein Belichtungsfeld ("60s", "30.0s"), danach ein
+    Binning-Feld ("1x1" oder "Bin1") und am Ende eine reine Zahl (laufende
+    Nummer, optional mit einer zweiten Zahl dahinter)."""
+    stem = fn.rsplit(".", 1)[0]
+    tokens = stem.split("_")
+    if len(tokens) < 4 or tokens[0].lower() != "light":
+        return None
+    # laufende Nummer hinten, optional mit einer zweiten Zahl ("0001_1")
+    end = len(tokens)
+    if not tokens[end - 1].isdigit():
+        return None
+    if end >= 2 and tokens[end - 2].isdigit():
+        end -= 1
+    body = tokens[1:end - 1]
+    exp_idx = next((i for i, t in enumerate(body) if _EXP_FIELD_RE.match(t)), None)
+    if exp_idx is None:
+        return None
+    if not any(_BIN_FIELD_RE.match(t) for t in body[exp_idx + 1:]):
+        return None
+    return float(_EXP_FIELD_RE.match(body[exp_idx]).group("exp")), None, ""
+
+
 def match_light_name(fn):
     """Erkennt einen Light-Dateinamen in allen bekannten Varianten und
     liefert (belichtung, datum, mid) oder None. mid ist der Teil, aus dem
@@ -13671,7 +13729,7 @@ def match_light_name(fn):
     if m:
         return (float(m.group("exp")), m.group("ts")[:8],
                 camera_from_extra_fields(m.group("extra")))
-    return parse_light_fields(fn)
+    return parse_light_fields(fn) or parse_light_fields_no_timestamp(fn)
 
 
 _UNDERSCORE_DATE_RE = re.compile(r'^\d{8}$')
@@ -13861,9 +13919,23 @@ def compute_obs(ra_h, dec_deg, ref_year):
 # Ordner-Scan
 # ======================================================================
 
+# Kometen-Bezeichnungen ohne das Wort "Komet": "C2017 K2", "C/2023 A3",
+# "P/2010 H2" (C/P/D/X/A/I + Jahr + Buchstabe + Zahl) und
+# periodische Kometen wie "12P" / "12P/Pons-Brooks". Ohne das landeten solche
+# Ordner in "Nebel/Deep-Sky" (und bekamen ein sinnloses Beobachtungsfenster);
+# nur Namen mit Stichwort wie "ZTF" oder "NEOWISE" wurden erkannt.
+_COMET_DESIGNATION_RE = re.compile(
+    r'(?<![a-z0-9])[cpdxai]\s?/?\s?(?:19|20)\d\d\s?[a-z]\d{1,2}(?![a-z0-9])'
+    r'|(?<![a-z0-9])\d{1,3}p(?=[\s/_-]|$)', re.IGNORECASE)
+
+
 def classify_category(name):
     lname = name.lower()
     for cat, keywords in CATEGORY_KEYWORDS:
+        # Kometen-Bezeichnungen zaehlen wie ein Komet-Stichwort, ebenfalls
+        # NACH "Sonne"/"Sonstiges" (Geraetenamen) und VOR "Mond"/"Planet"
+        if cat == "Komet" and _COMET_DESIGNATION_RE.search(name):
+            return cat
         if any(k in lname for k in keywords):
             return cat
     return "Nebel/Deep-Sky"
@@ -13943,8 +14015,276 @@ def _dir_size_only(path):
     return total
 
 
-def scan_project(path):
-    """Läuft rekursiv durch einen Projektordner und sammelt Kennzahlen."""
+# ======================================================================
+# FITS-Header (Rueckfall und Ergaenzung zur Dateinamen-Erkennung)
+# ======================================================================
+# Der Kopf einer FITS-Datei ist reiner Text (80-Zeichen-Karten in 2880-Byte-
+# Bloecken, Ende bei "END") und enthaelt, was im Dateinamen oft fehlt:
+# Kamera (INSTRUME), Brennweite (FOCALLEN), Belichtung (EXPTIME), Filter
+# (FILTER), Aufnahmezeit (DATE-OBS), Bildtyp (IMAGETYP). Es wird NUR der Kopf
+# gelesen (wenige Kilobyte), nie die Bilddaten, und nur dort, wo der Name
+# nicht reicht - nie fuer jede Datei. Ergebnisse stehen in einem kleinen
+# Zwischenspeicher (AstroLogbuch_fits_cache.json, Schluessel Pfad + Groesse +
+# Aenderungszeit), damit der naechste Start die Dateien nicht erneut oeffnet.
+FITS_EXT = {".fit", ".fits", ".fts"}
+FITS_CACHE_FILENAME = "AstroLogbuch_fits_cache.json"
+FITS_HEADER_BUDGET = 500      # Kopf-Lesevorgaenge je Projekt (Notbremse)
+_FITS_CACHE = {}
+_FITS_CACHE_DIRTY = False
+
+
+def load_fits_cache(cache_path):
+    global _FITS_CACHE
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            _FITS_CACHE.update(data)
+    except Exception:
+        pass
+
+
+def save_fits_cache(cache_path):
+    global _FITS_CACHE_DIRTY
+    if not _FITS_CACHE_DIRTY:
+        return
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(_FITS_CACHE, f)
+        _FITS_CACHE_DIRTY = False
+    except Exception:
+        pass  # nur eine Optimierung, kein Muss
+
+
+def read_fits_header(path, max_blocks=8):
+    """Liest nur den Kopf einer FITS-Datei und gibt {Schluessel: Wert-Text}
+    zurueck (leer bei Fehlern oder wenn es keine FITS-Datei ist)."""
+    cards = {}
+    try:
+        with open(path, "rb") as f:
+            if f.read(6) != b"SIMPLE":
+                return {}
+            f.seek(0)
+            for _ in range(max_blocks):
+                block = f.read(2880)
+                if len(block) < 2880:
+                    break
+                for i in range(0, 2880, 80):
+                    card = block[i:i + 80].decode("ascii", "replace")
+                    key = card[:8].strip()
+                    if key == "END":
+                        return cards
+                    if card[8:10] == "= ":
+                        val = card[10:]
+                        if val.lstrip().startswith("'"):
+                            m = re.match(r"\s*'((?:[^']|'')*)'", val)
+                            cards[key] = m.group(1).strip() if m else val.strip()
+                        else:
+                            cards[key] = val.split("/")[0].strip()
+    except OSError:
+        return {}
+    return cards
+
+
+def camera_token_from_instrume(text):
+    """Kamera-Rohtoken aus INSTRUME wie im Dateinamen ("ZWO ASI2600MC Pro" ->
+    "2600MC"), damit es mit den namensbasierten Kameras zusammengefuehrt
+    wird (siehe resolve_camera_labels()). Andere Kameras: der Text, aber ohne
+    Unterstriche."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    m = re.search(r'ASI\s*(\d{3,4})\s*(MC|MM)?', t, re.IGNORECASE)
+    if m:
+        return m.group(1) + (m.group(2) or "").upper()
+    return re.sub(r"\s+", " ", t.replace("_", " "))
+
+
+def _night_date_from_date_obs(text):
+    """DATE-OBS (UTC) -> Datum der Aufnahmenacht als YYYYMMDD: 12 Stunden
+    abziehen, damit Aufnahmen vor und nach Mitternacht zur selben Nacht
+    gehoeren (der Abend gibt der Nacht ihr Datum)."""
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})", (text or "").strip())
+    if not m:
+        return None
+    try:
+        dt = datetime(*[int(x) for x in m.groups()]) - timedelta(hours=12)
+    except ValueError:
+        return None
+    return dt.strftime("%Y%m%d")
+
+
+def fits_info(path, size, mtime):
+    """Zwischengespeicherte, aufbereitete Kopf-Angaben einer FITS-Datei:
+    exp (Sekunden), date (Aufnahmenacht), instrume, filt, focal (mm),
+    imagetyp, stacked (ist das ein Stack/Summenbild?)."""
+    global _FITS_CACHE_DIRTY
+    key = os.path.normcase(os.path.abspath(path))
+    hit = _FITS_CACHE.get(key)
+    if hit and hit.get("s") == size and hit.get("m") == mtime:
+        return hit["v"]
+    h = read_fits_header(path)
+
+    def num(*names):
+        for n in names:
+            try:
+                return float(str(h[n]).replace("D", "E"))
+            except (KeyError, ValueError):
+                continue
+        return None
+
+    info = {
+        "exp": num("EXPTIME", "EXPOSURE"),
+        "date": _night_date_from_date_obs(h.get("DATE-OBS", "")),
+        "instrume": h.get("INSTRUME", ""),
+        "filt": (h.get("FILTER", "") or "").strip().upper(),
+        "focal": num("FOCALLEN"),
+        "imagetyp": h.get("IMAGETYP", ""),
+        "stacked": any(k in h for k in ("STACKCNT", "NCOMBINE", "LIVETIME")),
+    }
+    _FITS_CACHE[key] = {"s": size, "m": mtime, "v": info}
+    _FITS_CACHE_DIRTY = True
+    return info
+
+
+def format_focal(values):
+    """Brennweiten (mm) aus ein paar Stichproben-Koepfen als Text: Werte
+    innerhalb von ca. 3 % gelten als dieselbe Optik ("1276, 1278, 1279" ->
+    "1278 mm"), verschiedene Optiken stehen nebeneinander ("580 / 1278 mm")."""
+    vals = sorted(v for v in (values or []) if v and v > 0)
+    if not vals:
+        return None
+    clusters = [[vals[0]]]
+    for v in vals[1:]:
+        if v - clusters[-1][0] <= max(10.0, clusters[-1][0] * 0.03):
+            clusters[-1].append(v)
+        else:
+            clusters.append([v])
+    meds = [int(round(c[len(c) // 2])) for c in clusters][:3]
+    return " / ".join(str(m) for m in meds) + " mm"
+
+
+# ======================================================================
+# EXIF (Canon-RAW, JPEG): Kamera, Brennweite, Belichtung, Aufnahmezeit
+# ======================================================================
+# Kameras mit RAW-Dateien (IMG_0001.CR3, .CR2, ...) und JPEGs tragen die
+# Angaben im EXIF-Teil statt im Dateinamen. Wie beim FITS-Kopf wird nur der
+# kleine Metadatenteil gelesen (CR3: die ersten Kilobyte, sonst Pillow mit
+# lazy open), nie die Bilddaten, und das Ergebnis im selben Zwischenspeicher
+# abgelegt. Die RAWs zaehlen als Aufnahmen mit ihrer Belichtungszeit, die
+# Stunden daraus sind aber nur ungefaehr (ein Dateiname verraet nicht, ob
+# nicht doch Darks/Flats/Testbilder dazwischen liegen) und werden mit "~"
+# angezeigt. JPEGs sind Ergebnisbilder: sie liefern nur Kamera und Brennweite,
+# und nur wenn sonst nichts ueber die Kamera bekannt ist.
+EXIF_RAW_EXT = {".cr2", ".cr3", ".nef", ".arw", ".dng"}
+EXIF_RAW_BUDGET = 1500        # EXIF-Lesevorgaenge je Projekt (Notbremse)
+_DSLR_BRAND_RE = re.compile(r"^(canon|nikon|sony|fujifilm|fuji|pentax|olympus|om digital|panasonic|leica|ricoh|sigma)\b",
+                            re.IGNORECASE)
+
+
+def _exif_pick(ex):
+    """Gewuenschte Felder aus einem Pillow-Exif-Objekt (IFD0 oder Exif-IFD)."""
+    try:
+        sub = ex.get_ifd(0x8769)
+    except Exception:
+        sub = {}
+
+    def get(tag):
+        v = ex.get(tag)
+        return v if v is not None else sub.get(tag)
+
+    def fnum(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    model = get(272)
+    return {
+        "model": str(model).strip() if model else "",
+        "exp": fnum(get(33434)),
+        "focal": fnum(get(37386)),
+        "dto": str(get(36867) or ""),
+    }
+
+
+def read_exif_info(path):
+    """Rohe EXIF-Angaben {model, exp, focal, dto} oder {} (Fehler/keine EXIF)."""
+    if not HAVE_PIL:
+        return {}
+    try:
+        if path.lower().endswith(".cr3"):
+            with open(path, "rb") as f:
+                head = f.read(65536)
+            vals = {}
+            for tag in (b"CMT1", b"CMT2"):
+                i = head.find(tag)
+                if i >= 4:
+                    size = struct.unpack(">I", head[i - 4:i])[0]
+                    ex = Image.Exif()
+                    ex.load(head[i + 4:i - 4 + size])
+                    for k, v in _exif_pick(ex).items():
+                        if v and not vals.get(k):
+                            vals[k] = v
+            return vals
+        with Image.open(path) as im:
+            return _exif_pick(im.getexif())
+    except Exception:
+        return {}
+
+
+def exif_info(path, size, mtime):
+    """Zwischengespeicherte EXIF-Angaben im selben Format wie fits_info():
+    exp (Sekunden), date (Aufnahmenacht), instrume (Kameramodell), focal (mm)."""
+    global _FITS_CACHE_DIRTY
+    key = os.path.normcase(os.path.abspath(path))
+    hit = _FITS_CACHE.get(key)
+    if hit and hit.get("s") == size and hit.get("m") == mtime:
+        return hit["v"]
+    raw = read_exif_info(path)
+    focal = raw.get("focal")
+    exp = raw.get("exp")
+    info = {
+        "exp": exp if exp and exp > 0 else None,
+        "date": None,
+        "instrume": raw.get("model", ""),
+        "filt": "",
+        "focal": focal if focal and focal > 0 else None,
+        "imagetyp": "",
+        "stacked": False,
+    }
+    m = re.match(r"(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})", raw.get("dto", ""))
+    if m:
+        try:
+            info["date"] = (datetime(*[int(x) for x in m.groups()]) - timedelta(hours=12)).strftime("%Y%m%d")
+        except ValueError:
+            pass
+    _FITS_CACHE[key] = {"s": size, "m": mtime, "v": info}
+    _FITS_CACHE_DIRTY = True
+    return info
+
+
+def header_info(path, size, mtime):
+    """FITS-Kopf oder EXIF, je nach Dateiendung."""
+    if os.path.splitext(path)[1].lower() in EXIF_RAW_EXT:
+        return exif_info(path, size, mtime)
+    return fits_info(path, size, mtime)
+
+
+def camera_token_from_model(text):
+    """Kamera-Rohtoken aus dem EXIF-Modell ("Canon EOS 80D"), ohne
+    Unterstriche (sie trennen im Rohtoken die Teile)."""
+    return re.sub(r"\s+", " ", (text or "").replace("_", " ")).strip()
+
+
+def scan_project(path, skip_paths=None):
+    """Läuft rekursiv durch einen Projektordner und sammelt Kennzahlen.
+
+    skip_paths: optionale Menge von Unterordnerpfaden, die NICHT mitgezaehlt
+    werden (sie sind als eigene Projekte gelistet, siehe
+    split_subproject_dirs(), sonst wuerden Belichtungszeit und Datenmenge
+    doppelt erscheinen)."""
+    skip_norm = {os.path.normcase(os.path.normpath(x)) for x in (skip_paths or ())}
     result = {
         "filters": {},          # Label -> {"count": n, "seconds": s}
         # Labels, die nicht aus dem Dateinamen, sondern aus dem Ordnernamen
@@ -13977,7 +14317,17 @@ def scan_project(path):
         # wuerde die darin steckende Gesamtbelichtungszeit die aus echten
         # Rohaufnahmen bereits gezaehlte doppelt aufaddieren.
         "stacked_fallback": [],
+        # Brennweiten (mm) aus Stichproben-Koepfen von FITS-Lights, siehe
+        # Ende von scan_project() und format_focal().
+        "focal_lengths": [],
+        "focal_by_camera": {},   # Kamera-Rohtoken -> Brennweiten (mm)
+        "hours_from_exif": False,  # Stunden (auch) aus EXIF-Belichtungszeiten: nur ungefaehr
+        "exif_hint": None,         # Kamera/Brennweite aus JPEG-EXIF, nur wenn sonst keine Kamera bekannt
     }
+    exif_budget = EXIF_RAW_BUDGET
+    fits_budget = FITS_HEADER_BUDGET
+    folder_cam = {}          # Ordnerpfad -> Kamera-Token aus dem FITS-Kopf
+    fits_light_files = {}    # Kamera-Rohtoken -> [(Pfad, Groesse, mtime)] gezaehlter FITS-Lights
 
     # Filterhinweis aus dem Projektordnernamen (siehe
     # filter_from_folder_name()). Gilt fuer alle Aufnahmen darunter, deren
@@ -14016,6 +14366,9 @@ def scan_project(path):
         # Aufnahmezahl eingehen, ihr Speicherplatz aber weiterhin in der
         # Datenmenge auftauchen - genau dieselbe Behandlung wie bei
         # Kalibrierordnern.
+        if skip_norm:
+            dirnames[:] = [d for d in dirnames
+                           if os.path.normcase(os.path.normpath(os.path.join(dirpath, d))) not in skip_norm]
         pruned = [d for d in dirnames if is_calib_name(d) or is_reject_name(d)]
         if pruned:
             dirnames[:] = [d for d in dirnames if d not in pruned]
@@ -14069,6 +14422,34 @@ def scan_project(path):
             if not light and (is_calib_name(lfn) or is_calib_name(base)):
                 continue  # Kalibrierdaten zaehlen nicht als Light
 
+            # Rueckfall ueber den FITS-Kopf, wenn der Dateiname nicht als
+            # Light erkannt wurde: Zaehlt nur, wenn der Kopf ausdruecklich
+            # "Light" als Bildtyp und eine Belichtungszeit nennt und es kein
+            # Summenbild ist; Ergebnisse der Bildbearbeitung (Namenswoerter,
+            # Stack-Ordner) und Kalibrierdaten bleiben aussen vor.
+            # Foto-RAWs (IMG_0001.CR3, ...): Belichtung, Kamera und Aufnahmezeit
+            # stehen im EXIF. Auch in Ordnern wie "Stacking" - RAW-Dateien der
+            # Kamera sind nie Zwischenergebnisse der Bearbeitung; nur Namen mit
+            # Ergebnis-Woertern bleiben aussen vor.
+            if (not light and ext in EXIF_RAW_EXT and exif_budget > 0
+                    and not any(w in lfn for w in PROCESSED_NAME_WORDS)):
+                exif_budget -= 1
+                xinfo = exif_info(full_fn, size, mtime)
+                if xinfo.get("exp"):
+                    light = (xinfo["exp"], xinfo.get("date"), camera_token_from_model(xinfo.get("instrume")))
+                    result["hours_from_exif"] = True
+
+            if (not light and ext in FITS_EXT and fits_budget > 0
+                    and not any(w in lfn for w in PROCESSED_NAME_WORDS)
+                    and not any(w in rel.lower() for w in STACK_WORDS)):
+                fits_budget -= 1
+                finfo = fits_info(full_fn, size, mtime)
+                if (finfo.get("exp") and finfo["exp"] > 0 and not finfo.get("stacked")
+                        and (finfo.get("imagetyp") or "").lower().startswith("light")):
+                    mid_parts = [camera_token_from_instrume(finfo.get("instrume")).replace("_", "-"),
+                                 finfo["filt"] if finfo.get("filt") in FILTER_MAP else ""]
+                    light = (finfo["exp"], finfo.get("date"), "_".join(p for p in mid_parts if p))
+
             if ext in RAW_EXT:
                 if light:
                     exp, ts, mid = light
@@ -14100,9 +14481,30 @@ def scan_project(path):
                     entry["count"] += 1
                     entry["seconds"] += exp
                     result["hours_from_names_found"] = True
-                    result["dates_seen"].add(ts)
+                    # Kein Datum im Dateinamen (z. B. "Light_x_60s_1x1_0001.fit"):
+                    # Aufnahmenacht aus dem FITS-Kopf.
+                    if not ts and ext in FITS_EXT and fits_budget > 0:
+                        fits_budget -= 1
+                        ts = fits_info(full_fn, size, mtime).get("date")
+                    if ts:
+                        result["dates_seen"].add(ts)
 
+                    # Nennt der Dateiname keine Kamera, steht sie im FITS-Kopf
+                    # (INSTRUME): je Ordner einmal nachsehen - ein Ordner ist
+                    # praktisch immer eine Sitzung mit einer Kamera. Das
+                    # ersetzt "unbekannt (Farbe/OSC, vermutlich)" durch die
+                    # tatsaechliche Kamera inkl. Mono/Farbe.
+                    if not cam_parts and ext in FITS_EXT:
+                        hc = folder_cam.get(dirpath)
+                        if hc is None:
+                            hc = camera_token_from_instrume(
+                                fits_info(full_fn, size, mtime).get("instrume")).replace("_", "-")
+                            folder_cam[dirpath] = hc
+                        if hc:
+                            cam_parts = [hc]
                     camera_raw = "_".join(cam_parts) if cam_parts else "unbekannt"
+                    if ext in FITS_EXT or ext in EXIF_RAW_EXT:
+                        fits_light_files.setdefault(camera_raw, []).append((full_fn, size, mtime))
                     # hier bewusst noch der Rohcode als Schluessel (z. B. "2600",
                     # "2600MC_RGB"); die Zusammenfuehrung nach Modellnummer und
                     # Farbe/Mono passiert zentral in scan_root() ueber alle
@@ -14142,6 +14544,41 @@ def scan_project(path):
                     if dm:
                         result["dates_seen"].add(dm.group(0))
 
+    # Brennweite (FOCALLEN) aus wenigen Stichproben-Koepfen (erste, letzte und
+    # zwei dazwischen) - die Optik wechselt hoechstens zwischen Sitzungen,
+    # nicht von Bild zu Bild.
+    # Je Kamera getrennt: Zwei Kameras in einem Projekt haengen meist an
+    # zwei Optiken, die Brennweite gehoert dann zur jeweiligen Kamera.
+    for cam_raw, files in fits_light_files.items():
+        n = len(files)
+        vals = []
+        for idx in sorted({0, n // 3, (2 * n) // 3, n - 1}):
+            fp, fs, fm = files[idx]
+            fv = header_info(fp, fs, fm).get("focal")
+            if fv:
+                vals.append(fv)
+        if vals:
+            result["focal_by_camera"][cam_raw] = vals
+            result["focal_lengths"].extend(vals)
+
+    # Weiss das Projekt sonst nichts ueber die Kamera (nur Ergebnisbilder),
+    # liefern einige JPEGs per EXIF wenigstens Kamera und Brennweite.
+    if not result["cameras"] and HAVE_PIL:
+        jpgs = [x for x in result["final_files"] if os.path.splitext(x[0])[1].lower() in (".jpg", ".jpeg")]
+        if jpgs:
+            n = len(jpgs)
+            models, focals = {}, []
+            for idx in sorted({0, n // 3, (2 * n) // 3, n - 1}):
+                rel_j, fs_j, fm_j = jpgs[idx]
+                xi = exif_info(os.path.join(path, rel_j), fs_j, fm_j)
+                tok = camera_token_from_model(xi.get("instrume"))
+                if tok:
+                    models[tok] = models.get(tok, 0) + 1
+                if xi.get("focal"):
+                    focals.append(xi["focal"])
+            if models:
+                result["exif_hint"] = {"models": sorted(models, key=lambda k: -models[k])[:3], "focals": focals}
+
     # Rueckfall auf Stacked-Ausgabedateien (siehe parse_stacked_name()):
     # NUR wenn das Projekt am Ende ueberhaupt keine Belichtungszeit aus
     # echten Rohaufnahmen hat - sonst wuerde die hier steckende
@@ -14165,6 +14602,15 @@ _DISPLAY_NAME_DONE_RE = re.compile(
     r'\s*[-–_]?\s*(?<![a-z0-9])(?:done|fertig)(?![a-z0-9])\.?\s*$', re.IGNORECASE)
 
 
+# Trenner zwischen Projekt- und Unterordnername bei Unterordner-Projekten
+# (siehe split_subproject_dirs()). "//" kann in keinem Ordnernamen vorkommen
+# (weder "/" noch "\\" sind unter Windows erlaubt), taucht also nie zufaellig
+# auf. Der zusammengesetzte Name "Komet - Done // 03.07.22" dient der
+# Erkennung (Status/Typ stecken im Namen des uebergeordneten Ordners), die
+# Anzeige macht daraus "Komet / 03.07.22".
+SUBPROJECT_SEP = " // "
+
+
 def clean_display_name(name):
     """Entfernt eine abschliessende "- Done"/"- Fertig"-Markierung aus dem
     ANGEZEIGTEN Objektnamen (Nutzerwunsch: der Status wird bereits ueber
@@ -14172,8 +14618,79 @@ def clean_display_name(name):
     Wirkt nur auf das Namensfeld fuer die Anzeige - der uebergebene rohe
     Ordnername bleibt fuer detect_status() (weiter unten), die Merge-
     Verarbeitung und zum Oeffnen des Ordners unveraendert massgeblich."""
+    if SUBPROJECT_SEP in name:
+        parent, child = name.split(SUBPROJECT_SEP, 1)
+        return f"{clean_display_name(parent)} / {clean_display_name(child)}"
     cleaned = _DISPLAY_NAME_DONE_RE.sub('', name).rstrip(' -_')
     return cleaned if cleaned else name
+
+
+def override_key(path):
+    """Schluessel fuer manuelle Wahlen je Projekt (Vorschaubild, Bildausschnitt).
+    Der volle Ordnerpfad, aber OHNE abschliessende "Done"/"Fertig"-Markierung
+    im letzten Ordnernamen und in Windows-ueblicher Kleinschreibung. Grund:
+    Wird ein Projekt spaeter fertig und der Ordner deshalb mit " - Done"
+    umbenannt, aendert sich der Pfad - mit dem rohen Pfad als Schluessel
+    ginge die manuelle Wahl dabei stillschweigend verloren und die
+    automatische Heuristik waehlte ploetzlich ein anderes Bild (von einem
+    Nutzer bemerkt). Mit diesem Schluessel bleibt sie ueber das Umbenennen
+    hinweg erhalten."""
+    if not path:
+        return None
+    # "Done"/"Fertig" aus JEDEM Ordnernamen des Pfads entfernen, nicht nur aus
+    # dem letzten: Bei Unterordner-Projekten ("Komet - Done\Part2") traegt
+    # der HAUPTordner die Markierung, und auch dessen Umbenennen darf die
+    # Wahl des Unterordner-Projekts nicht verlieren (von einem Nutzer bemerkt).
+    drive, rest = os.path.splitdrive(os.path.normpath(str(path)))
+    parts = [clean_display_name(part) if part else part for part in rest.split(os.sep)]
+    return os.path.normcase(drive + os.sep.join(parts))
+
+
+def canonical_overrides(mapping):
+    """Wendet override_key() auf alle Schluessel einer Config-Zuordnung an
+    (aeltere Eintraege mit dem rohen Pfad werden dadurch mit erfasst).
+    "archiv:<Name>"-Schluessel (archivierte Projekte ohne Ordner) bleiben
+    unveraendert. Gibt es denselben Schluessel mehrfach (z. B. alter Name
+    und neuer Name), gewinnt der Eintrag, dessen Ordner tatsaechlich noch
+    existiert."""
+    out = {}
+    if not isinstance(mapping, dict):
+        return out
+    items = sorted(mapping.items(), key=lambda kv: isinstance(kv[0], str) and os.path.isdir(kv[0]))
+    for k, v in items:
+        if not isinstance(k, str):
+            continue
+        if k.startswith("archiv:"):
+            out[k] = v
+            continue
+        ck = override_key(k)
+        if ck:
+            out[ck] = v
+    return out
+
+
+# Ordnernamen-Kuerzel zum Ausblenden eines Projekts (statt "Done"/"Fertig"):
+# als ganzes Wort irgendwo im Ordnernamen, z. B. "NEOWISE - 200719 - hidden".
+# Bei einem Hauptordner gilt es automatisch fuer alle Unterordner-Projekte.
+_HIDE_TAG_RE = re.compile(r'(?<![a-z0-9])(?:hidden|ausgeblendet|ignore|ignoriert)(?![a-z0-9])', re.IGNORECASE)
+
+
+def hidden_reason(name, full):
+    """None (sichtbar) oder "tag" (Kuerzel im Ordnernamen) bzw. "config"
+    (per Knopf ausgeblendet, Eintrag in hidden_projects)."""
+    if _HIDE_TAG_RE.search(name):
+        return "tag"
+    if override_key(full) in HIDDEN_PROJECTS:
+        return "config"
+    return None
+
+
+def preview_override_for(project_path):
+    """(gefunden, Wert) aus PREVIEW_OVERRIDES fuer einen Projektordner."""
+    key = override_key(project_path)
+    if key in PREVIEW_OVERRIDES:
+        return True, PREVIEW_OVERRIDES[key]
+    return False, None
 
 
 def detect_status(name, scan):
@@ -14219,7 +14736,7 @@ def total_hours(scan):
         return round(sum(scan["session_hours"].values()), 2), True
     if scan["hours_from_names_found"]:
         secs = sum(v["seconds"] for v in scan["filters"].values())
-        return round(secs / 3600, 2), True
+        return round(secs / 3600, 2), not scan.get("hours_from_exif")
     return None, False
 
 
@@ -14262,7 +14779,8 @@ def format_cameras(scan):
         tag = "mit Filter" if v["filtered"] and not v["unfiltered"] else \
               "OSC" if v["unfiltered"] and not v["filtered"] else \
               "gemischt"
-        parts.append(f"{label} {v['count']}× ({tag})")
+        focal = format_focal(v.get("focals"))
+        parts.append(f"{label} {v['count']}× ({tag}{', ' + focal if focal else ''})")
     return " · ".join(parts) if parts else "–"
 
 
@@ -14875,6 +15393,10 @@ def resolve_camera_labels(all_scans):
                 us["unfiltered"] += v["unfiltered"]
 
     def resolve(cam_raw):
+        # Foto-Kameras (Canon/Nikon/Sony/...) sind Farbkameras: kein
+        # Mono-/OSC-Raten und kein "vermutlich" noetig.
+        if _DSLR_BRAND_RE.match(cam_raw):
+            return CAMERA_MAP.get(cam_raw.lower(), cam_raw)
         model = extract_camera_model(cam_raw)
         base = CAMERA_MAP.get(model.lower(), model)
         ev = explicit_camera_variant(cam_raw)
@@ -14908,18 +15430,31 @@ def build_entry_from_scan(name, scan, project_path, ref_year, resolve_camera, me
     merged_cams = {}
     for cam_raw, v in scan["cameras"].items():
         label = resolve_camera(cam_raw)
-        e = merged_cams.setdefault(label, {"count": 0, "seconds": 0.0, "filtered": 0, "unfiltered": 0})
+        e = merged_cams.setdefault(label, {"count": 0, "seconds": 0.0, "filtered": 0, "unfiltered": 0, "focals": []})
         e["count"] += v["count"]; e["seconds"] += v["seconds"]
         e["filtered"] += v["filtered"]; e["unfiltered"] += v["unfiltered"]
+        e["focals"].extend((scan.get("focal_by_camera") or {}).get(cam_raw, []))
     scan = dict(scan)
     scan["cameras"] = merged_cams
+
+    cameras_txt = format_cameras(scan)
+    focal_txt = format_focal(scan.get("focal_lengths"))
+    hint = scan.get("exif_hint")
+    if cameras_txt == "–" and hint:
+        h_focal = format_focal(hint["focals"])
+        cameras_txt = f"{' / '.join(hint['models'])} (laut Bild-EXIF{', ' + h_focal if h_focal else ''})"
+        focal_txt = focal_txt or h_focal
 
     status, month_tag = detect_status(name, scan)
     hours, exact = total_hours(scan)
     nights = len(scan["dates_seen"]) or (1 if scan["total_files"] else 0)
-    category = classify_category(name)
+    # Bei Unterordner-Projekten (siehe SUBPROJECT_SEP) stecken Typ und Objekt
+    # im Namen des uebergeordneten Ordners, der Unterordnername ("580mm +
+    # Mars - 11.02.23") darf die Erkennung nicht verfaelschen.
+    base_name = name.split(SUBPROJECT_SEP, 1)[0]
+    category = classify_category(base_name)
     coords = find_object_coords(
-        name, category=category,
+        base_name, category=category,
         online_cache_old=object_cache_old, online_cache_used=object_cache_used,
         online_stats=object_stats)
     obs = compute_obs(coords[0], coords[1], ref_year) if coords else None
@@ -14934,8 +15469,8 @@ def build_entry_from_scan(name, scan, project_path, ref_year, resolve_camera, me
         # umbenannt), faellt es automatisch auf die Heuristik zurueck statt
         # einfach kein Bild mehr zu zeigen.
         picked = None
-        if project_path in PREVIEW_OVERRIDES:
-            override_rel = PREVIEW_OVERRIDES[project_path]
+        has_override, override_rel = preview_override_for(project_path)
+        if has_override:
             if override_rel is None:
                 picked = None
             else:
@@ -14970,13 +15505,15 @@ def build_entry_from_scan(name, scan, project_path, ref_year, resolve_camera, me
         "hours": hours,
         "hoursExact": exact,
         "filters": format_filters(scan),
-        "cameras": format_cameras(scan),
+        "cameras": cameras_txt,
+        "focal": focal_txt,
         "camStats": {label: {"count": v["count"], "seconds": round(v["seconds"], 1)}
                      for label, v in scan["cameras"].items()},
         "note": note,
         "obs": obs,
         "thumb": thumb,
         "path": project_path,
+        "overrideKey": override_key(project_path),
         "bytes": scan["total_bytes"],
         "lastModified": edit_date(scan),
         "captureDate": capture_date(scan),
@@ -15085,6 +15622,119 @@ def _discover_projects_under(folder, group):
     return [(os.path.basename(folder), folder, group)]
 
 
+def _dir_has_files(path):
+    """Liegt irgendwo unter path (rekursiv) mindestens eine Datei?"""
+    for _dirpath, _dirnames, direntries in _scandir_walk(path):
+        if direntries:
+            return True
+    return False
+
+
+def _excluded_as_word(folder_name):
+    """Gilt der Ordnername als ausgeschlossen - exakt ODER weil ein Eintrag
+    der Ausschlussliste als ganzes Wort darin vorkommt ("Blogartikel" schliesst
+    auch "_Blogartikel_Upload" aus, "neu" aber nicht "Neumond")? Nur fuer die
+    Unterordner-Aufspaltung: Dort heissen Ordner oft "Blog_Export",
+    "_Blogartikel_Upload" o. ae. und waeren als eigene Projekte falsch, obwohl
+    der Nutzer das Stichwort ausgeschlossen hat. Die normale Projektsuche
+    vergleicht weiterhin nur den vollen Namen."""
+    low = folder_name.lower()
+    if low in EXCLUDE_FOLDER_NAMES:
+        return True
+    for ex in EXCLUDE_FOLDER_NAMES:
+        if ex and re.search(r'(?<![a-z0-9\u00e4\u00f6\u00fc\u00df])' + re.escape(ex)
+                            + r'(?![a-z0-9\u00e4\u00f6\u00fc\u00df])', low):
+            return True
+    return False
+
+
+def _qualifying_subdirs(folder):
+    """Passende Unterordner von folder: nicht ausgeschlossen (auch als
+    ganzes Wort), nicht Kalibrier-/Aussortier-/Stack-/Light-Ordner und nicht
+    leer."""
+    try:
+        with os.scandir(folder) as it:
+            subs = [e for e in it if e.is_dir(follow_symlinks=False)]
+    except OSError:
+        return []
+    keep = []
+    for e in sorted(subs, key=lambda x: x.name.lower()):
+        low = e.name.lower()
+        if (_excluded_as_word(e.name) or is_calib_name(low) or is_reject_name(e.name)
+                or any(w in low for w in STACK_WORDS) or _squash_name(e.name) in LIGHT_FOLDER_NAMES):
+            continue
+        if not _dir_has_files(e.path):
+            continue
+        keep.append(e)
+    return keep
+
+
+def split_subproject_info(name, full):
+    """Plan fuer die Unterordner-Aufspaltung eines Projektordners (siehe
+    SPLIT_SUBFOLDERS): None oder {"kids": [(Pfad, Bezeichnung), ...],
+    "parents": [Ordner, ...]}. parents sind die Ordner oberhalb der Kinder
+    (der Projektordner selbst, bei verschachtelter Aufteilung zusaetzlich
+    der Zwischenordner).
+
+    Bedingungen: Option an, Typ des Projekts in SPLIT_SUBFOLDER_CATEGORIES
+    (Standard: Kometen) und mindestens ZWEI passende Unterordner. Gibt es
+    genau EINEN Sitzungs-/Datumsordner (z. B. "28.03.2024"), der selbst
+    mindestens zwei passende Unterordner hat (z. B. zwei Teleskope
+    "LZOS_1200mm" und "TSQ_100_Apo_580mm" in derselben Nacht), wird eine
+    Ebene tiefer aufgeteilt; die Bezeichnung enthaelt dann beide Namen
+    ("28.03.2024 - LZOS_1200mm"). Mit nur einem Unterordner ohne eigene
+    Unterteilung bleibt es ein Projekt."""
+    if not SPLIT_SUBFOLDERS or SUBPROJECT_SEP in name:
+        return None
+    if classify_category(name) not in SPLIT_SUBFOLDER_CATEGORIES:
+        return None
+    level1 = _qualifying_subdirs(full)
+    if len(level1) >= 2:
+        return {"kids": [(e.path, e.name) for e in level1], "parents": [full]}
+    if len(level1) == 1 and looks_like_session_dir(level1[0].name):
+        # Nur bei Sitzungs-/Datumsordnern eine Ebene tiefer (nicht z. B. bei
+        # einem "Zeitraffer"-Ordner, dessen Unterordner keine Aufnahmesitzungen
+        # des Projekts sind).
+        inner = _qualifying_subdirs(level1[0].path)
+        if len(inner) >= 2:
+            return {"kids": [(e.path, f"{level1[0].name} - {e.name}") for e in inner],
+                    "parents": [full, level1[0].path]}
+    return None
+
+
+def split_subproject_dirs(name, full):
+    """Pfade der Unterordner, die bei aktivierter Option als EIGENE Projekte
+    gelistet werden - sonst eine leere Liste (Einzelheiten siehe
+    split_subproject_info())."""
+    info = split_subproject_info(name, full)
+    return [k[0] for k in info["kids"]] if info else []
+
+
+def _parent_keeps_own_row(parents, child_paths):
+    """Haben die uebergeordneten Ordner neben den aufgespaltenen
+    Unterordnern eigene Inhalte (direkte Dateien, z. B. ein Gesamtergebnis,
+    oder einen Stack-/Verarbeitungsordner mit Dateien)? Dann bleibt der
+    Projektordner zusaetzlich als eigene Zeile bestehen (ohne die
+    Unterordner, siehe scan_project())."""
+    children = {os.path.normcase(os.path.normpath(c)) for c in child_paths}
+    chain = {os.path.normcase(os.path.normpath(x)) for x in parents}
+    for parent in parents:
+        try:
+            with os.scandir(parent) as it:
+                for e in it:
+                    if e.is_file(follow_symlinks=False):
+                        return True
+                    if e.is_dir(follow_symlinks=False):
+                        key = os.path.normcase(os.path.normpath(e.path))
+                        if key in children or key in chain:
+                            continue
+                        if any(w in e.name.lower() for w in STACK_WORDS) and _dir_has_files(e.path):
+                            return True
+        except OSError:
+            pass
+    return False
+
+
 def discover_project_folders(root_folder):
     """Findet die tatsaechlichen Projektordner unterhalb von root_folder.
     Im bisherigen (weiterhin haeufigsten) Fall ist bereits jeder direkte
@@ -15110,6 +15760,18 @@ def discover_project_folders(root_folder):
     results = []
     for e in sorted(top, key=lambda x: x.name.lower()):
         results.extend(_discover_projects_under(e.path, None))
+    if SPLIT_SUBFOLDERS:
+        expanded = []
+        for name, full, group in results:
+            info = split_subproject_info(name, full)
+            if not info:
+                expanded.append((name, full, group))
+                continue
+            if _parent_keeps_own_row(info["parents"], [k[0] for k in info["kids"]]):
+                expanded.append((name, full, group))
+            for kpath, klabel in info["kids"]:
+                expanded.append((f"{name}{SUBPROJECT_SEP}{klabel}", kpath, group))
+        results = expanded
     return results
 
 
@@ -15124,6 +15786,20 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
     # sonst zwei Projekte mit zufaellig gleichem Namen in unterschiedlichen
     # Zweigen einander ueberschreiben.
     candidates = discover_project_folders(root_folder)
+    fits_cache_path = (os.path.join(os.path.dirname(thumb_cache_path), FITS_CACHE_FILENAME)
+                       if thumb_cache_path else None)
+    if fits_cache_path:
+        load_fits_cache(fits_cache_path)
+
+    # Ausgeblendete Projekte werden ganz normal eingelesen und nur markiert
+    # (hidden/hiddenBy, siehe unten): Tabelle, Karten und Statistik zeigen sie
+    # nicht, der Statusfilter "Ausgeblendet" und die Einstellungen schon (zum
+    # Nachschauen und Wieder-Einblenden).
+    hidden_by = {}
+    for cand_name, cand_full, _cand_group in candidates:
+        reason = hidden_reason(cand_name, cand_full)
+        if reason:
+            hidden_by[cand_full] = reason
 
     total = len(candidates)
     entries = {}      # Pfad -> scan_project()-Ergebnis
@@ -15136,7 +15812,7 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
         if progress_cb:
             progress_cb(i, total * 2, line)
         try:
-            entries[full] = scan_project(full)
+            entries[full] = scan_project(full, skip_paths=split_subproject_dirs(name, full) or None)
         except Exception:
             entries[full] = None
         names[full] = name
@@ -15211,6 +15887,15 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
                 "captureDate": None, "group": groups.get(full),
             })
 
+    for p in projects:
+        reason = hidden_by.get(p.get("path"))
+        if reason:
+            p["hidden"] = True
+            p["hiddenBy"] = reason
+
+    if fits_cache_path:
+        save_fits_cache(fits_cache_path)
+
     if thumb_cache_path:
         save_thumb_cache(thumb_cache_path, used_thumb_cache)
         if thumb_stats["hits"] or thumb_stats["new"]:
@@ -15244,13 +15929,24 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
         changed = False
         for p in projects:
             live_names.add(p["name"])
+            # Unterordner-Projekte heissen "Eltern / Unterordner" (siehe
+            # clean_display_name()). Der Eltern-Eintrag im Archiv (aus der
+            # Zeit vor dem Aufspalten oder von vor der Option) darf dann
+            # nicht zusaetzlich als "Archiviert" neben den Unterordner-Zeilen
+            # auftauchen.
+            if " / " in p["name"]:
+                live_names.add(p["name"].split(" / ", 1)[0])
+            # Ausgeblendete Projekte nicht archivieren (sonst taucht ein
+            # absichtlich ausgeblendetes Projekt spaeter als "Archiviert" auf)
+            if p.get("hidden"):
+                continue
             if p["status"] != "done":
                 continue
             prev = archive.get(p["name"])
             new_entry = {
                 "name": p["name"], "category": p["category"],
                 "nights": p["nights"], "hours": p["hours"], "hoursExact": p["hoursExact"],
-                "filters": p["filters"], "cameras": p["cameras"], "thumb": p["thumb"],
+                "filters": p["filters"], "cameras": p["cameras"], "focal": p.get("focal"), "thumb": p["thumb"],
                 "lastModified": p["lastModified"], "captureDate": p["captureDate"],
                 "originalPath": p["path"],
                 "archivedAt": (prev or {}).get("archivedAt") or time.time(),
@@ -15258,7 +15954,24 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
             if prev != new_entry:
                 archive[p["name"]] = new_entry
                 changed = True
+        stale = []
         for name, entry in archive.items():
+            # Archivierte Unterordner-Eintraege ("Eltern / Unterordner") nur,
+            # solange die Option aktiv ist - sonst stuenden sie bei wieder
+            # ausgeschalteter Option als eigene "Archiviert"-Zeilen neben
+            # dem (dann wieder ganzen) Elternprojekt.
+            if " / " in name and not SPLIT_SUBFOLDERS:
+                continue
+            # Existiert der Ordner eines Unterordner-Eintrags noch, ist aber
+            # nicht (mehr) als Projekt gelistet (z. B. nachtraeglich
+            # ausgeschlossen wie "_Blogartikel_Upload", oder die Aufspaltung
+            # greift dort nicht mehr), ist der Eintrag ein Ueberbleibsel und
+            # wird entfernt. "Archiviert" ist fuer GELOESCHTE Ordner gedacht.
+            if " / " in name and name not in live_names:
+                orig = entry.get("originalPath")
+                if orig and os.path.isdir(orig):
+                    stale.append(name)
+                    continue
             if name in live_names:
                 continue  # Ordner existiert noch, Live-Zeile hat Vorrang
             projects.append({
@@ -15267,10 +15980,14 @@ def scan_root(root_folder, ref_year, thumb_cache_path=None, object_cache_path=No
                 "nights": entry.get("nights"), "hours": entry.get("hours"),
                 "hoursExact": entry.get("hoursExact", False),
                 "filters": entry.get("filters") or "–", "cameras": entry.get("cameras") or "–",
+                "focal": entry.get("focal"),
                 "camStats": {}, "note": "", "obs": None, "thumb": entry.get("thumb"),
                 "path": None, "bytes": 0, "lastModified": entry.get("lastModified"),
                 "captureDate": entry.get("captureDate"), "group": None,
             })
+        for name in stale:
+            archive.pop(name, None)
+            changed = True
         if changed:
             save_archive(archive_path, archive)
     return projects
@@ -15446,6 +16163,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .pcard-img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
   .focus-stage{ position:relative; display:inline-block; line-height:0; overflow:hidden; border-radius:8px; cursor:crosshair; touch-action:none; max-width:100%; }
   .focus-stage img{ display:block; max-width:100%; max-height:62vh; user-select:none; -webkit-user-drag:none; pointer-events:none; }
+  .focus-zoom{ display:flex; align-items:center; justify-content:center; gap:10px; margin-top:12px; font-size:12.5px; color:var(--text-dim); }
+  .focus-zoom input{ width:240px; accent-color:var(--accent); }
+  .focus-zoom span{ min-width:3.2em; font-family:'IBM Plex Mono',monospace; }
   .focus-frame{ position:absolute; border:2px solid var(--accent); box-shadow:0 0 0 9999px rgba(0,0,0,.55); pointer-events:none; box-sizing:border-box; }
   .pcard-ph{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:40px; color:var(--text-faint); }
   .pcard-shade{ position:absolute; left:0; right:0; bottom:0; height:42%; background:linear-gradient(to bottom, rgba(8,10,16,0) 0%, rgba(8,10,16,.72) 100%); pointer-events:none; }
@@ -15613,6 +16333,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .pill.neutral{ background:var(--neutral-soft); color:var(--neutral); } .pill.neutral .dot{ background:var(--neutral); }
   .archive-del{ margin-left:6px; border:none; background:none; color:var(--text-faint); cursor:pointer; font-size:15px; line-height:1; padding:0 3px; }
   .archive-del:hover{ color:var(--bad); }
+  .row-hide{ margin-left:6px; border:none; background:none; color:var(--text-faint); cursor:pointer; padding:2px 3px; line-height:0; vertical-align:middle; opacity:.55; }
+  .row-hide:hover{ color:var(--accent); opacity:1; }
+  .row-unhide{ margin-left:6px; border:1px solid var(--border); background:var(--surface-2); color:var(--text-dim); cursor:pointer; padding:2px 8px; font-size:11px; border-radius:999px; }
+  .row-unhide:hover{ border-color:var(--accent); color:var(--accent); }
   .none{ color:var(--text-faint); }
   /* Kein max-width mehr hier: die Spaltenbreite kommt jetzt fest aus der
      <colgroup> (table-layout:fixed), ein zusaetzlicher Cap hier wuerde nur
@@ -15696,6 +16420,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="settings-field">
           <div class="checkbox-row"><input type="checkbox" id="cfgOnlineLookup"><label for="cfgOnlineLookup">Unbekannte Objekte online nachschlagen (Sesame/CDS)</label></div>
           <div class="checkbox-row" style="margin-top:6px;"><input type="checkbox" id="cfgShowThumbnails"><label for="cfgShowThumbnails">Vorschaubilder anzeigen</label></div>
+          <div class="checkbox-row" style="margin-top:6px;"><input type="checkbox" id="cfgSplitSub"><label for="cfgSplitSub">Unterordner als eigene Projekte listen</label></div>
+          <p class="field-hint" style="margin:4px 0 0 24px;">
+            Für Projekte mit je einem Unterordner pro Nacht, Tag oder Brennweite (z. B. ein Komet): Jeder Unterordner
+            erscheint dann als eigene Zeile ("Komet / 03.07.22"). Gilt nur für die angehakten Typen und nur, wenn ein
+            Ordner mindestens zwei solche Unterordner hat. Flats, Darks, Stack-Ordner und "Lights" zählen nie, ebenso
+            Ordner, in deren Namen ein ausgeschlossenes Wort vorkommt (z. B. "Blogartikel" schließt auch "_Blogartikel_Upload" aus).
+            Normale Deep-Sky-Projekte mit "NACHT_..."-Ordnern bleiben deshalb unberührt.
+          </p>
+          <div class="chipset" id="splitCats" style="margin:6px 0 0 24px;">
+            <label class="checkbox-row"><input type="checkbox" data-split-cat="Komet"> Komet</label>
+            <label class="checkbox-row"><input type="checkbox" data-split-cat="Planet"> Planet</label>
+            <label class="checkbox-row"><input type="checkbox" data-split-cat="Mond"> Mond</label>
+            <label class="checkbox-row"><input type="checkbox" data-split-cat="Sonne"> Sonne</label>
+          </div>
         </div>
         <div class="settings-field">
           <label>Kamera-Bezeichnungen</label>
@@ -15719,6 +16457,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <p class="field-hint">Kommagetrennt. Ordner, deren Name eines dieser Wörter enthält, gelten als Flats/Darks/Bias und zählen nicht als Fortschritt.</p>
           <textarea id="cfgCalibWords"></textarea>
           <p class="field-hint warn" id="cfgCalibWarn" hidden></p>
+        </div>
+        <div class="settings-field">
+          <label>Ausgeblendete Projekte</label>
+          <p class="field-hint">
+            Ausgeblendete Projekte erscheinen nicht in Tabelle, Karten und Statistik, ihre Ordner bleiben unverändert.
+            Ausblenden: Knopf mit dem durchgestrichenen Auge bei einem Projekt (in der Kartenansicht &quot;Ausblenden&quot;),
+            oder eines der Wörter &quot;hidden&quot;, &quot;ausgeblendet&quot;, &quot;ignore&quot; oder &quot;ignoriert&quot; in den Ordnernamen
+            schreiben (bei einem Hauptordner gilt das für alle Unterordner-Projekte). Wieder einblenden: hier
+            &quot;Einblenden&quot; bzw. das Wort aus dem Ordnernamen entfernen. Ansehen: Statusfilter &quot;Ausgeblendet&quot;
+            über der Tabelle (erscheint, sobald es ausgeblendete Projekte gibt).
+          </p>
+          <div id="hiddenList"></div>
         </div>
         <div class="settings-field">
           <label>Erfasste Ordner</label>
@@ -15767,6 +16517,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <p class="hint" id="focusHint"></p>
       <div style="text-align:center;">
         <div class="focus-stage" id="focusStage"><img id="focusImg" alt=""><div class="focus-frame" id="focusFrame"></div></div>
+      </div>
+      <div class="focus-zoom">
+        <label for="focusZoom">Zoom</label>
+        <button class="btn tiny" id="focusZoomOut" type="button" title="Herauszoomen (auch Mausrad nach unten)">&minus;</button>
+        <input type="range" id="focusZoom" min="1" max="5" step="0.05" value="1">
+        <button class="btn tiny" id="focusZoomIn" type="button" title="Hineinzoomen (auch Mausrad nach oben)">+</button>
+        <span id="focusZoomVal">1,0×</span>
       </div>
       <div class="settings-actions">
         <button class="btn" id="focusAutoBtn" type="button" title="Manuelle Wahl entfernen, der Ausschnitt wird wieder automatisch bestimmt">Automatisch</button>
@@ -15876,7 +16633,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   </footer>
 </div>
 <script>
-const DATA = %%DATA_JSON%%;
+const ALL_DATA = %%DATA_JSON%%;
+// Ausgeblendete Projekte (nur schlanke Platzhalter, siehe scan_root()) gehoeren
+// nicht in Tabelle, Karten und Statistik; die Einstellungen listen sie auf.
+const DATA = ALL_DATA.filter(d=>!d.hidden);
+const HIDDEN_ITEMS = ALL_DATA.filter(d=>d.hidden);
 // Aus LIGHT_FOLDER_NAMES im Python-Teil gespiegelt (siehe is_calib_name()),
 // damit die Warnung im Einstellungsdialog nicht von der tatsaechlichen
 // Auswertung abweichen kann.
@@ -15939,7 +16700,7 @@ function relDays(ts){
 const CARD_RATIO = 1.6;
 let FOCUS = %%FOCUS_JSON%%;
 const autoFocusMemo = {};
-function focusKey(d){ return d.path || ("archiv:" + d.name); }
+function focusKey(d){ return d.overrideKey || d.path || ("archiv:" + d.name); }
 
 function boxBlur(src, w, h, r){
   if(r < 1) return src;
@@ -16022,17 +16783,39 @@ function focusToPos(f, r){
   }
   return `${px.toFixed(1)}% ${py.toFixed(1)}%`;
 }
+// Sichtbarer Ausschnitt in Bildanteilen (0..1): vw/vh = Breite/Hoehe des
+// Fensters, x0/y0 = linke obere Ecke. z = Zoom (1 = ganzes Kartenfenster
+// bei object-fit:cover, mehr = kleineres Fenster, Motiv wird groesser).
+function cropGeometry(r, f, z){
+  const vw = Math.min(1, CARD_RATIO / r) / z;
+  const vh = Math.min(1, r / CARD_RATIO) / z;
+  const x0 = Math.min(1 - vw, Math.max(0, f[0] - vw / 2));
+  const y0 = Math.min(1 - vh, Math.max(0, f[1] - vh / 2));
+  return {vw, vh, x0, y0};
+}
 function applyCardFocus(img){
   if(!img.naturalHeight) return;
   const r = img.naturalWidth / img.naturalHeight;
-  if(Math.abs(r - CARD_RATIO) < 0.04) return; // fuellt die Karte ohnehin
   const key = decodeURIComponent(img.dataset.key || "");
-  let f = FOCUS[key];
+  const ov = FOCUS[key];
+  const z = ov && ov[2] > 1 ? ov[2] : 1;
+  if(z <= 1 && Math.abs(r - CARD_RATIO) < 0.04) return; // fuellt die Karte ohnehin
+  let f = ov ? [ov[0], ov[1]] : null;
   if(!f){
     if(!(key in autoFocusMemo)) autoFocusMemo[key] = autoFocus(img);
     f = autoFocusMemo[key];
   }
-  if(f) img.style.objectPosition = focusToPos(f, r);
+  if(!f) return;
+  if(z <= 1){ img.style.objectPosition = focusToPos(f, r); return; }
+  // Mit Zoom: Bild in passender Groesse im Kartenfenster positionieren
+  // (das Seitenverhaeltnis stimmt dann schon, deshalb object-fit:fill).
+  const g = cropGeometry(r, f, z);
+  img.style.objectFit = "fill";
+  img.style.inset = "auto";
+  img.style.width = (100 / g.vw) + "%";
+  img.style.height = (100 / g.vh) + "%";
+  img.style.left = (-g.x0 / g.vw * 100) + "%";
+  img.style.top = (-g.y0 / g.vh * 100) + "%";
 }
 
 // Aenderungsprotokoll: Klick auf die Versionsnummer oben rechts. Der Text
@@ -16092,16 +16875,18 @@ const focusImg = document.getElementById("focusImg");
 const focusFrame = document.getElementById("focusFrame");
 const focusHint = document.getElementById("focusHint");
 let focusState = null;
+const focusZoom = document.getElementById("focusZoom");
+const focusZoomVal = document.getElementById("focusZoomVal");
+const FOCUS_MAX_ZOOM = 5;
 function updateFocusFrame(){
-  const {r, f} = focusState;
-  const vw = r > CARD_RATIO ? CARD_RATIO/r : 1;
-  const vh = r < CARD_RATIO ? r/CARD_RATIO : 1;
-  const x0 = Math.min(1-vw, Math.max(0, f[0]-vw/2));
-  const y0 = Math.min(1-vh, Math.max(0, f[1]-vh/2));
-  focusFrame.style.left = (x0*100) + "%";
-  focusFrame.style.top = (y0*100) + "%";
-  focusFrame.style.width = (vw*100) + "%";
-  focusFrame.style.height = (vh*100) + "%";
+  const {r, f, z} = focusState;
+  const g = cropGeometry(r, f, z);
+  focusFrame.style.left = (g.x0*100) + "%";
+  focusFrame.style.top = (g.y0*100) + "%";
+  focusFrame.style.width = (g.vw*100) + "%";
+  focusFrame.style.height = (g.vh*100) + "%";
+  focusZoom.value = z;
+  focusZoomVal.textContent = z.toFixed(1).replace(".", ",") + "×";
 }
 function closeFocusPicker(){ focusOverlay.hidden = true; focusState = null; }
 function openFocusPicker(d){
@@ -16111,49 +16896,113 @@ function openFocusPicker(d){
   focusHint.textContent = "Lade Bild …";
   focusImg.onload = ()=>{
     const r = focusImg.naturalWidth / focusImg.naturalHeight;
-    const cur = FOCUS[key] || (key in autoFocusMemo ? autoFocusMemo[key] : null) || autoFocus(focusImg) || [0.5, 0.5];
-    focusState = {key, r, f: cur.slice(), manual: !!FOCUS[key], changed: false};
-    const crops = Math.abs(r - CARD_RATIO) >= 0.04;
-    focusFrame.style.display = crops ? "" : "none";
-    focusHint.textContent = crops
-      ? "Klicke oder ziehe im Bild: Der helle Rahmen zeigt, welcher Ausschnitt auf der Karte sichtbar ist."
-      : "Dieses Bild hat bereits das Format der Karte, hier gibt es nichts zu verschieben.";
-    if(crops) updateFocusFrame();
+    const ov = FOCUS[key];
+    const f0 = ov ? [ov[0], ov[1]]
+      : ((key in autoFocusMemo ? autoFocusMemo[key] : null) || autoFocus(focusImg) || [0.5, 0.5]);
+    const z0 = ov && ov[2] > 1 ? ov[2] : 1;
+    focusState = {key, r, f: f0.slice(), z: z0, manual: !!ov, changed: false};
+    focusHint.textContent = "Klicke oder ziehe im Bild: Der helle Rahmen zeigt, welcher Ausschnitt auf der Karte sichtbar ist. "
+      + "Mit dem Mausrad oder dem Regler zoomst du hinein (Motiv wird auf der Karte größer) oder wieder hinaus.";
+    updateFocusFrame();
   };
   focusImg.src = d.thumb;
+}
+// Mittelpunkt so begrenzen, dass das Fenster im Bild bleibt
+function clampFocusCenter(f, z){
+  const g = cropGeometry(focusState.r, f, z);
+  return [g.x0 + g.vw/2, g.y0 + g.vh/2];
 }
 function focusFromPointer(e){
   if(!focusState) return;
   const rect = focusStage.getBoundingClientRect();
-  focusState.f = [
+  if(!rect.width || !rect.height) return;
+  focusState.f = clampFocusCenter([
     Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
     Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
-  ];
+  ], focusState.z);
   focusState.changed = true;
+  updateFocusFrame();
+}
+// Zoom aendern; p = Punkt (0..1), der dabei an seiner Stelle im Rahmen
+// bleibt (Mauszeiger), ohne p bleibt der Mittelpunkt stehen (Regler).
+function setFocusZoom(z1, p){
+  const s = focusState;
+  if(!s) return;
+  z1 = Math.min(FOCUS_MAX_ZOOM, Math.max(1, z1));
+  if(Math.abs(z1 - s.z) < 1e-6) return;
+  const q = p || s.f;
+  const k = s.z / z1;
+  const c = [q[0] + (s.f[0] - q[0]) * k, q[1] + (s.f[1] - q[1]) * k];
+  s.f = clampFocusCenter(c, z1);
+  s.z = z1;
+  s.changed = true;
   updateFocusFrame();
 }
 let focusDragging = false;
 focusStage.addEventListener("pointerdown", e=>{ focusDragging = true; focusStage.setPointerCapture(e.pointerId); focusFromPointer(e); });
 focusStage.addEventListener("pointermove", e=>{ if(focusDragging) focusFromPointer(e); });
 focusStage.addEventListener("pointerup", ()=>{ focusDragging = false; });
-function saveFocus(key, f){
+focusStage.addEventListener("wheel", e=>{
+  if(!focusState) return;
+  e.preventDefault();
+  const rect = focusStage.getBoundingClientRect();
+  if(!rect.width || !rect.height) return;
+  setFocusZoom(focusState.z * Math.exp(-e.deltaY * 0.0015), [
+    Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
+    Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
+  ]);
+}, {passive:false});
+focusZoom.addEventListener("input", ()=> setFocusZoom(parseFloat(focusZoom.value), null));
+document.getElementById("focusZoomIn").addEventListener("click", ()=>{ if(focusState) setFocusZoom(focusState.z + 0.25, null); });
+document.getElementById("focusZoomOut").addEventListener("click", ()=>{ if(focusState) setFocusZoom(focusState.z - 0.25, null); });
+function saveFocus(key, f, z){
   const hasApi = !!(window.pywebview && window.pywebview.api && window.pywebview.api.set_focus);
-  if(f){ FOCUS[key] = f; } else { delete FOCUS[key]; }
+  if(f){ FOCUS[key] = z > 1.001 ? [f[0], f[1], z] : [f[0], f[1]]; } else { delete FOCUS[key]; }
   delete autoFocusMemo[key];
-  if(hasApi) window.pywebview.api.set_focus(key, f ? f[0] : null, f ? f[1] : null);
+  if(hasApi) window.pywebview.api.set_focus(key, f ? f[0] : null, f ? f[1] : null, f ? z : 1);
   closeFocusPicker();
   render();
 }
 document.getElementById("focusSaveBtn").addEventListener("click", ()=>{
   if(!focusState) return;
-  if(focusState.changed) saveFocus(focusState.key, focusState.f); else closeFocusPicker();
+  if(focusState.changed) saveFocus(focusState.key, focusState.f, focusState.z); else closeFocusPicker();
 });
 document.getElementById("focusAutoBtn").addEventListener("click", ()=>{
-  if(focusState) saveFocus(focusState.key, null);
+  if(focusState) saveFocus(focusState.key, null, 1);
 });
 document.getElementById("focusCancelBtn").addEventListener("click", closeFocusPicker);
 focusOverlay.addEventListener("click", e=>{ if(e.target === focusOverlay) closeFocusPicker(); });
 
+const EYE_OFF_SVG = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8s2.3-4 6.5-4 6.5 4 6.5 4-2.3 4-6.5 4S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="1.8"/><path d="M2.5 13.5l11-11"/></svg>';
+// Ausblenden gibt es fuer echte Projektordner des Hauptordners (nicht fuer
+// Archiv-Zeilen ohne Ordner und nicht fuer erfasste Ordner/Platten).
+function canHide(d){ return !!(d.path && d.overrideKey && !d.snapshotLabel && d.status !== "archived" && !d.hidden); }
+// Ausgeblendete Projekte (nur im Filter "Ausgeblendet" sichtbar): per Knopf
+// ausgeblendete lassen sich hier wieder einblenden, per Ordnername
+// ausgeblendete nur durch Entfernen des Worts aus dem Ordnernamen.
+function unhideProject(d){
+  if(!(window.pywebview && window.pywebview.api && window.pywebview.api.unhide_project)){
+    alert("Projekte einblenden geht nur in der App-Ansicht.");
+    return;
+  }
+  window.pywebview.api.unhide_project(d.overrideKey).then(r=>{
+    if(r && r.ok) location.reload(); else alert((r && r.error) || "Fehler beim Einblenden.");
+  });
+}
+function hiddenNote(d){ return d.hidden ? (d.hiddenBy === "tag" ? "Ausgeblendet per Ordnername" : "Ausgeblendet per Knopf") : ""; }
+function hideProject(d){
+  if(!(window.pywebview && window.pywebview.api && window.pywebview.api.hide_project)){
+    alert("Projekte ausblenden geht nur in der App-Ansicht.");
+    return;
+  }
+  if(!confirm(`"${d.name}" ausblenden?\n\nDer Ordner bleibt unverändert. Wieder einblenden: Einstellungen, Bereich "Ausgeblendete Projekte".`)) return;
+  window.pywebview.api.hide_project(focusKey(d), d.name).then(r=>{
+    if(r && r.ok) location.reload(); else alert((r && r.error) || "Fehler beim Ausblenden.");
+  });
+}
+// Brennweite steht bei den Kameras selbst ("... (mit Filter, 578 mm)"); nur
+// wenn dort keine steht (z. B. aeltere Archiv-Eintraege), zusaetzlich zeigen.
+function focalExtra(d){ return d.focal && !/mm\)/.test(d.cameras || "") ? d.focal : ""; }
 function cardHtml(d){
   const meta = STATUS_META[d.status];
   const stCls = meta.cls==="done" ? "st-done" : meta.cls==="open" ? "st-warn" : meta.cls==="unclear" ? "st-bad" : "";
@@ -16164,12 +17013,15 @@ function cardHtml(d){
   if(edited && edited!==captured) dates += `${dates?" &middot; ":""}bearbeitet ${edited}`;
   const hours = d.hours==null ? "" : `<div class="pcard-hours">${d.hoursExact?"":"~"}${d.hours}<small>h</small></div>`;
   const chips = filterChips(d);
-  const cam = d.cameras && d.cameras!=="–" ? `<div class="pcard-cam">${d.cameras}</div>` : "";
-  const subs = [d.group?`Gruppe: ${d.group}`:"", d.snapshotLabel?`Platte: ${d.snapshotLabel}`:"", d.note||""].filter(Boolean)
+  const camLine = [d.cameras && d.cameras!=="–" ? d.cameras : "", focalExtra(d)].filter(Boolean).join(" &middot; ");
+  const cam = camLine ? `<div class="pcard-cam">${camLine}</div>` : "";
+  const subs = [hiddenNote(d), d.group?`Gruppe: ${d.group}`:"", d.snapshotLabel?`Platte: ${d.snapshotLabel}`:"", d.note||""].filter(Boolean)
     .map(s=>`<div class="pcard-sub">${s}</div>`).join("");
   const key = encodeURIComponent(focusKey(d));
   const img = d.thumb ? `<img class="pcard-img" src="${d.thumb}" alt="" loading="lazy" data-key="${key}" onload="applyCardFocus(this)">` : `<div class="pcard-ph">&#9729;</div>`;
-  const actions = (d.thumb ? `<button type="button" data-act="focus" title="Sichtbaren Bildausschnitt der Karte festlegen">Ausschnitt</button>` : "")
+  const actions = (d.hidden && d.hiddenBy === "config" ? `<button type="button" data-act="unhide" title="Projekt wieder einblenden">Einblenden</button>` : "")
+    + (canHide(d) ? `<button type="button" data-act="hide" title="Projekt ausblenden (der Ordner bleibt unverändert, Einblenden unter Einstellungen)">Ausblenden</button>` : "")
+    + (d.thumb ? `<button type="button" data-act="focus" title="Sichtbaren Bildausschnitt der Karte festlegen">Ausschnitt</button>` : "")
     + (d.path ? `<button type="button" data-act="pick" title="Vorschaubild wählen">Bild</button>` : "")
     + (d.status==="archived" ? `<button type="button" data-act="del" data-name="${encodeURIComponent(d.name)}" title="Archiv-Eintrag entfernen (löscht keine echten Dateien)">&times;</button>` : "");
   return `<div class="pcard ${stCls}${d.path?" has-path":""}" data-key="${key}"${d.path?` data-path="${encodeURIComponent(d.path)}" title="Klick öffnet den Ordner"`:""}>
@@ -16375,9 +17227,10 @@ function render(){
     <div class="stat"><div class="v">${DATA.reduce((s,d)=>s+(d.nights||0),0)}</div><div class="l">Aufnahmenächte</div><div class="v-sub">&nbsp;</div></div>`;
 
   const statusChipDefs = [["all","Alle"],["done","Fertig"],["wip","In Arbeit"],["open-date","Geplant"],["raw-only","Rohdaten"],["unclear","Unklar"],["barely","Kaum begonnen"],["archived","Archiviert"]];
+  if(HIDDEN_ITEMS.length) statusChipDefs.push(["hidden","Ausgeblendet"]);
   document.getElementById("statusChips").innerHTML = statusChipDefs.map(([key,label])=>{
     const active = state.status===key ? "active":"";
-    const n = key==="all" ? DATA.length : (statusCounts[key]||0);
+    const n = key==="all" ? DATA.length : key==="hidden" ? HIDDEN_ITEMS.length : (statusCounts[key]||0);
     return `<span class="chip ${active}" data-status="${key}">${label} <span class="num">${n}</span></span>`;
   }).join("");
   document.getElementById("catChips").innerHTML = ["all",...cats].map(c=>{
@@ -16385,8 +17238,12 @@ function render(){
     return `<span class="chip ${active}" data-cat="${c}">${c==="all"?"Alle Typen":c}</span>`;
   }).join("");
 
-  let rows = DATA.filter(d=>{
-    if(state.status==="unclear-group"){
+  // Filter "Ausgeblendet": zeigt statt der normalen Liste die ausgeblendeten
+  // Projekte (nur Typ und Suche wirken zusaetzlich).
+  let rows = (state.status==="hidden" ? HIDDEN_ITEMS : DATA).filter(d=>{
+    if(state.status==="hidden"){
+      // kein Statusfilter
+    } else if(state.status==="unclear-group"){
       if(!(d.status==="unclear"||d.status==="raw-only"||d.status==="barely")) return false;
     } else if(state.status!=="all" && d.status!==state.status){
       return false;
@@ -16425,16 +17282,16 @@ function render(){
     const nameHtml = d.path
       ? `<span class="obj-link" title="Klick öffnet den Ordner">${d.name}</span>`
       : `<span class="obj">${d.name}</span>`;
-    return `<tr${d.path?` class="row-link" data-path="${encodeURIComponent(d.path)}"`:""}>
+    return `<tr${d.path?` class="row-link" data-path="${encodeURIComponent(d.path)}"`:""} data-key="${encodeURIComponent(focusKey(d))}">
       <td class="img-col"${d.path?` title="Klick wählt das Vorschaubild"`:""}>${img}</td>
-      <td>${nameHtml}${d.group?`<span class="obj-sub">Gruppe: ${d.group}</span>`:""}${d.tag?`<span class="obj-sub">Monatshinweis: ${d.tag}</span>`:""}${d.snapshotLabel?`<span class="obj-sub">Platte: ${d.snapshotLabel}${fmtDateShort(d.snapshotDate)?` &middot; erfasst ${fmtDateShort(d.snapshotDate)}`:""}</span>`:""}${d.note?`<span class="merge-note">${d.note}</span>`:""}</td>
+      <td>${nameHtml}${d.group?`<span class="obj-sub">Gruppe: ${d.group}</span>`:""}${d.tag?`<span class="obj-sub">Monatshinweis: ${d.tag}</span>`:""}${d.hidden?`<span class="obj-sub">${hiddenNote(d)}</span>`:""}${d.snapshotLabel?`<span class="obj-sub">Platte: ${d.snapshotLabel}${fmtDateShort(d.snapshotDate)?` &middot; erfasst ${fmtDateShort(d.snapshotDate)}`:""}</span>`:""}${d.note?`<span class="merge-note">${d.note}</span>`:""}</td>
       <td class="ctr-col"><span class="cat">${d.category}</span></td>
-      <td class="ctr-col"><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span>${d.status==="archived"?`<button class="archive-del" type="button" title="Archiv-Eintrag entfernen (löscht keine echten Dateien)" data-name="${encodeURIComponent(d.name)}">&times;</button>`:""}</td>
+      <td class="ctr-col"><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span>${d.status==="archived"?`<button class="archive-del" type="button" title="Archiv-Eintrag entfernen (löscht keine echten Dateien)" data-name="${encodeURIComponent(d.name)}">&times;</button>`:""}${d.hidden && d.hiddenBy==="config"?`<button class="row-unhide" type="button" title="Projekt wieder einblenden">Einblenden</button>`:""}${canHide(d)?`<button class="row-hide" type="button" title="Projekt ausblenden (der Ordner bleibt unverändert, Einblenden unter Einstellungen)">${EYE_OFF_SVG}</button>`:""}</td>
       <td class="num-col">${fmtDateCell(d)}</td>
       <td class="num-col">${d.nights? d.nights : '<span class="none">&ndash;</span>'}</td>
       <td class="num-col">${fmtHours(d)}</td>
       <td class="filters-txt">${d.filters||'<span class="none">&ndash;</span>'}</td>
-      <td class="filters-txt">${d.cameras||'<span class="none">&ndash;</span>'}</td>
+      <td class="filters-txt">${d.cameras||'<span class="none">&ndash;</span>'}${focalExtra(d)?`<span class="obj-sub">${focalExtra(d)}</span>`:""}</td>
       <td>${fmtObsCell(d)}</td>
     </tr>`;
   }).join("");
@@ -16554,8 +17411,16 @@ document.getElementById("cards").addEventListener("click", e=>{
   const act = e.target.closest("button[data-act]");
   const card = e.target.closest(".pcard");
   if(act){
+    if(act.dataset.act==="hide" && card){
+      const d = ALL_DATA.find(x=>focusKey(x) === decodeURIComponent(card.dataset.key));
+      if(d) hideProject(d);
+    }
+    if(act.dataset.act==="unhide" && card){
+      const d = ALL_DATA.find(x=>focusKey(x) === decodeURIComponent(card.dataset.key));
+      if(d) unhideProject(d);
+    }
     if(act.dataset.act==="focus" && card){
-      const d = DATA.find(x=>focusKey(x) === decodeURIComponent(card.dataset.key));
+      const d = ALL_DATA.find(x=>focusKey(x) === decodeURIComponent(card.dataset.key));
       if(d) openFocusPicker(d);
     }
     if(act.dataset.act==="pick" && card && card.dataset.path) openPreviewPicker(decodeURIComponent(card.dataset.path));
@@ -16578,6 +17443,20 @@ document.querySelectorAll("thead th[data-key]").forEach(th=>{ th.addEventListene
 // funktioniert. Die Bildzelle wird zuerst geprueft und beendet den Handler
 // dann mit return, damit nicht zusaetzlich noch der Ordner geoeffnet wird.
 document.getElementById("rows").addEventListener("click", e=>{
+  const hideBtn = e.target.closest("button.row-hide");
+  if(hideBtn){
+    const tr = hideBtn.closest("tr");
+    const d = tr && ALL_DATA.find(x=>focusKey(x) === decodeURIComponent(tr.dataset.key));
+    if(d) hideProject(d);
+    return;
+  }
+  const unhideBtn = e.target.closest("button.row-unhide");
+  if(unhideBtn){
+    const tr = unhideBtn.closest("tr");
+    const d = tr && ALL_DATA.find(x=>focusKey(x) === decodeURIComponent(tr.dataset.key));
+    if(d) unhideProject(d);
+    return;
+  }
   const delBtn = e.target.closest("button.archive-del");
   if(delBtn){
     const name = decodeURIComponent(delBtn.dataset.name);
@@ -16729,12 +17608,16 @@ function openSettings(){
     document.getElementById("cfgLatitude").value = cfg.latitude;
     document.getElementById("cfgOnlineLookup").checked = !!cfg.online_lookup_enabled;
     document.getElementById("cfgShowThumbnails").checked = !!cfg.show_thumbnails;
+    document.getElementById("cfgSplitSub").checked = !!cfg.split_subfolders;
+    const splitCats = cfg.split_subfolder_categories || ["Komet"];
+    document.querySelectorAll("#splitCats input[data-split-cat]").forEach(cb=>{ cb.checked = splitCats.includes(cb.dataset.splitCat); });
     document.getElementById("cfgExcludeFolders").value = (cfg.exclude_folder_names || []).join(", ");
     document.getElementById("cfgCalibWords").value = (cfg.calib_words || []).join(", ");
     mapToRows(cameraMapTable, cfg.camera_map, "Rohcode, z. B. 2600", "Anzeigename, z. B. ASI2600");
     mapToRows(filterMapTable, cfg.filter_map, "Kürzel, z. B. H", "Anzeigename, z. B. Ha");
     updateCalibWarning();
     loadSnapshotList();
+    renderHiddenList();
     settingsOverlay.hidden = false;
   }).catch(err=>{
     settingsStatus.textContent = "Konnte Einstellungen nicht laden: " + err;
@@ -16769,6 +17652,30 @@ function renderSnapshotList(snapshots){
   }).join("");
 }
 
+function renderHiddenList(){
+  const box = document.getElementById("hiddenList");
+  if(!HIDDEN_ITEMS.length){
+    box.innerHTML = '<p class="field-hint">Keine Projekte ausgeblendet.</p>';
+    return;
+  }
+  box.innerHTML = HIDDEN_ITEMS.map((d,i)=>{
+    const how = d.hiddenBy === "tag"
+      ? '<span class="obj-sub">per Ordnername (Wort aus dem Ordnernamen entfernen, um es wieder einzublenden)</span>'
+      : '<span class="obj-sub">per Knopf ausgeblendet</span>';
+    const btn = d.hiddenBy === "tag" ? "" : `<button class="btn tiny" type="button" data-unhide="${i}">Einblenden</button>`;
+    return `<div class="snapshot-row"><div class="snapshot-info"><b>${escHtml(d.name)}</b>${how}</div>${btn}</div>`;
+  }).join("");
+}
+document.getElementById("hiddenList").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-unhide]");
+  if(!b) return;
+  const d = HIDDEN_ITEMS[parseInt(b.dataset.unhide, 10)];
+  if(!d) return;
+  b.disabled = true;
+  window.pywebview.api.unhide_project(d.overrideKey).then(r=>{
+    if(r && r.ok) location.reload(); else { alert((r && r.error) || "Fehler beim Einblenden."); b.disabled = false; }
+  });
+});
 function loadSnapshotList(){
   window.pywebview.api.list_snapshots().then(renderSnapshotList).catch(()=>{
     snapshotListEl.innerHTML = '<p class="field-hint">Konnte erfasste Ordner nicht laden.</p>';
@@ -16894,6 +17801,8 @@ document.getElementById("saveSettingsBtn").addEventListener("click", ()=>{
     latitude: parseFloat(document.getElementById("cfgLatitude").value),
     online_lookup_enabled: document.getElementById("cfgOnlineLookup").checked,
     show_thumbnails: document.getElementById("cfgShowThumbnails").checked,
+    split_subfolders: document.getElementById("cfgSplitSub").checked,
+    split_subfolder_categories: [...document.querySelectorAll("#splitCats input[data-split-cat]")].filter(cb=>cb.checked).map(cb=>cb.dataset.splitCat),
     exclude_folder_names: splitList(document.getElementById("cfgExcludeFolders").value),
     calib_words: splitList(document.getElementById("cfgCalibWords").value),
     camera_map: rowsToMap(cameraMapTable),
@@ -17190,6 +18099,7 @@ def run_scan_and_build(out_dir, thumb_cache_path, object_cache_path, archive_pat
         for snap in snapshots.values():
             for p in snap.get("projects", []):
                 p = dict(p)
+                p["overrideKey"] = override_key(p.get("path"))
                 p["snapshotLabel"] = snap.get("label")
                 p["snapshotDate"] = snap.get("captured_at")
                 projects.append(p)
@@ -17275,22 +18185,55 @@ class Api:
     def get_config(self):
         return load_config(self.config_path)
 
-    def set_focus(self, key, x=None, y=None):
+    def hide_project(self, key, name=""):
+        """Blendet ein Projekt aus (Eintrag in hidden_projects) und liest neu
+        ein. Die Ordner bleiben unveraendert."""
+        key = str(key or "")
+        if not key:
+            return {"ok": False, "error": "Kein Projekt angegeben."}
+        cfg = load_config(self.config_path)
+        hidden = dict(cfg.get("hidden_projects") or {})
+        for old_key in [k for k in hidden if isinstance(k, str) and override_key(k) == override_key(key)]:
+            del hidden[old_key]
+        hidden[override_key(key)] = str(name or key)
+        cfg["hidden_projects"] = hidden
+        return self.apply_settings(cfg)
+
+    def unhide_project(self, key):
+        """Blendet ein per Knopf ausgeblendetes Projekt wieder ein."""
+        key = str(key or "")
+        cfg = load_config(self.config_path)
+        hidden = dict(cfg.get("hidden_projects") or {})
+        for old_key in [k for k in hidden if isinstance(k, str) and override_key(k) == override_key(key)]:
+            del hidden[old_key]
+        cfg["hidden_projects"] = hidden
+        return self.apply_settings(cfg)
+
+    def set_focus(self, key, x=None, y=None, z=1.0):
         """Speichert den manuell gesetzten Bildausschnitt der Kartenansicht
         fuer ein Projekt (x, y = Mittelpunkt, 0..1) dauerhaft in der Config,
         ohne neu einzulesen. x/y = None entfernt den Eintrag, dann gilt
-        wieder die automatische Berechnung."""
+        wieder die automatische Berechnung. z = Zoomfaktor (1 = kein Zoom,
+        sonst wird [x, y, z] gespeichert)."""
         global FOCUS_OVERRIDES
         key = str(key or "")
         if not key:
             return {"ok": False, "error": "Kein Projekt angegeben."}
         cfg = load_config(self.config_path)
         overrides = dict(cfg.get("focus_overrides") or {})
+        # Gleichwertige Eintraege (anderer Ordnername, z. B. mit/ohne "Done") entfernen
+        same = (lambda k: k == key) if key.startswith("archiv:") else (lambda k: override_key(k) == override_key(key))
+        for old_key in [k for k in overrides if isinstance(k, str) and same(k)]:
+            del overrides[old_key]
         if x is None or y is None:
-            overrides.pop(key, None)
+            pass
         else:
             try:
-                overrides[key] = [min(1.0, max(0.0, float(x))), min(1.0, max(0.0, float(y)))]
+                entry = [min(1.0, max(0.0, float(x))), min(1.0, max(0.0, float(y)))]
+                zoom = min(8.0, max(1.0, float(z if z is not None else 1.0)))
+                if zoom > 1.001:
+                    entry.append(round(zoom, 3))
+                overrides[key] = entry
             except (TypeError, ValueError):
                 return {"ok": False, "error": "Ungültiger Ausschnitt."}
         cfg["focus_overrides"] = overrides
@@ -17394,6 +18337,7 @@ class Api:
             ref_year = date.today().year
             projects = scan_root(path, ref_year, thumb_cache_path=self.thumb_cache_path,
                                   object_cache_path=self.object_cache_path)
+            projects = [p for p in projects if not p.get("hidden")]
         except Exception as exc:
             traceback.print_exc()
             return {"ok": False, "error": f"Fehler beim Einlesen: {exc}"}
@@ -17477,12 +18421,13 @@ class Api:
             save_thumb_cache(self.thumb_cache_path, merged)
         items.sort(key=lambda it: it["name"].lower())
 
-        if project_path not in PREVIEW_OVERRIDES:
+        has_override, override_rel = preview_override_for(project_path)
+        if not has_override:
             current = {"mode": "auto"}
-        elif PREVIEW_OVERRIDES[project_path] is None:
+        elif override_rel is None:
             current = {"mode": "none"}
         else:
-            current = {"mode": "file", "path": PREVIEW_OVERRIDES[project_path]}
+            current = {"mode": "file", "path": override_rel}
         return {"ok": True, "items": items, "current": current}
 
     def set_preview_override(self, project_path, mode, rel_path=None):
@@ -17496,12 +18441,17 @@ class Api:
             return {"ok": False, "error": "Kein Projektpfad angegeben."}
         cfg = load_config(self.config_path)
         overrides = dict(cfg.get("preview_overrides") or {})
+        # Gleichwertige Eintraege (z. B. alter Ordnername ohne "Done") entfernen,
+        # gespeichert wird unter dem Schluessel von override_key().
+        key = override_key(project_path)
+        for old_key in [k for k in overrides if isinstance(k, str) and override_key(k) == key]:
+            del overrides[old_key]
         if mode == "auto":
-            overrides.pop(project_path, None)
+            pass
         elif mode == "none":
-            overrides[project_path] = None
+            overrides[key] = None
         elif mode == "file" and rel_path:
-            overrides[project_path] = rel_path
+            overrides[key] = rel_path
         else:
             return {"ok": False, "error": "Ungültige Auswahl."}
         cfg["preview_overrides"] = overrides
