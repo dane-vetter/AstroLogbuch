@@ -4,6 +4,29 @@ CHANGELOG - AstroLogbuch
 Neueste Aenderung zuerst. Die aktuell laufende Version steht im Dashboard
 oben rechts (AstroLogbuch vX.Y.Z) sowie in der Konsole beim Start.
 
+v1.11.0 - 2026-11-15
+---------------------
+- Neu: Farbthemen. Einstellungen, Bereich "Aussehen": fuenf abgestimmte
+  Themen - Mitternachtsblau (Vorgabe, das bisherige Aussehen), Graphit,
+  Nachtrot (rote Toene, schont die Nachtsicht am Teleskop), Waldgruen und
+  Violett - jeweils in einer hellen und einer dunklen Variante. Dazu der
+  Modus "Automatisch (wie Windows)", "Hell" oder "Dunkel" (bisher folgte das
+  Programm immer der Windows-Einstellung). Jede Auswahl wirkt sofort als
+  Vorschau auf die ganze Oberflaeche; dauerhaft gilt sie nach "Speichern &
+  neu einlesen", "Abbrechen" stellt das bisherige Aussehen wieder her. Alle
+  Farbkombinationen (Text, Akzent, Statusfarben) sind auf gute Lesbarkeit
+  abgestimmt (Kontrast mindestens 4,6 zu 1; dafuer wurden im hellen
+  Standardthema einzelne Farben leicht abgedunkelt).
+- Neu: Kartengroesse. In der Kartenansicht gibt es neben dem Umschalter
+  Tabelle/Karten drei Stufen: "Gross" (wie bisher, hoechstens 4 Spalten),
+  "Mittel" (bis zu 6 Spalten) und "Klein" (bis zu 10 Spalten als
+  Gesamtuebersicht: nur Bild, Name, Status und Stunden, das Textfeld
+  entfaellt, der volle Name steht im Tooltip). Die Wahl wird gespeichert.
+  Vorschlag aus dem Forum (mehr Projekte auf einen Blick).
+- Behoben: Die Status-Pillen auf den Karten ("Fertig", "In Arbeit", ...)
+  waren im hellen Farbschema kaum lesbar (dunkle Pille, dunkle Statusfarbe).
+  Sie haben jetzt feste helle Farben.
+
 v1.10.0 - 2026-11-11
 ---------------------
 - Neu: Unterordner als eigene Projekte (Einstellungen, standardmaessig aus).

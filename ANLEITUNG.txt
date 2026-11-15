@@ -102,6 +102,23 @@ In der Kartenansicht nutzt die Seite die volle Fensterbreite, bei bis zu
 vier Spalten; auf grossen Bildschirmen (z. B. im Vollbild) werden die
 Karten und damit die Vorschaubilder entsprechend groesser.
 
+Aussehen: In den Einstellungen (Zahnrad), Bereich "Aussehen", gibt es fuenf
+Farbthemen - Mitternachtsblau (Vorgabe), Graphit, Nachtrot (rote Toene,
+schont die Nachtsicht am Teleskop), Waldgruen und Violett - jeweils in einer
+hellen und einer dunklen Variante. Dazu den Modus "Automatisch (wie Windows)",
+"Hell" oder "Dunkel". Jede Auswahl wirkt sofort als Vorschau auf die ganze
+Oberflaeche. Dauerhaft gilt sie erst nach "Speichern & neu einlesen";
+"Abbrechen" (oder Schliessen des Fensters) stellt das bisherige Aussehen
+wieder her. Alle Farbkombinationen (Text, Akzent, Statusfarben) sind auf
+gute Lesbarkeit abgestimmt (Kontrast mindestens 4,6 zu 1).
+
+Kartengroesse: Neben dem Umschalter Tabelle/Karten gibt es in der
+Kartenansicht drei Stufen. "Gross" (Vorgabe) zeigt hoechstens vier Spalten
+mit grossen Bildern, "Mittel" bis zu sechs Spalten, "Klein" bis zu zehn
+Spalten als Gesamtuebersicht - dort stehen nur Bild, Name, Status und
+Stunden auf der Karte, das Textfeld entfaellt (der volle Name erscheint beim
+Ueberfahren). Die Wahl merkt sich das Programm.
+
 Bildausschnitt: Der Bildbereich einer Karte hat das Format 16:10. Bei
 Hochformat-Aufnahmen schneidet das Programm deshalb Teile ab und waehlt den
 sichtbaren Ausschnitt automatisch dort, wo das Hauptmotiv liegt. Liegt

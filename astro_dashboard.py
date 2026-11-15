@@ -144,6 +144,14 @@ DEFAULT_CONFIG = {
     # Modus und der lokale Server hat bei jedem Start einen anderen Port,
     # beides verwirft localStorage beim Beenden.
     "view_mode": "table",
+    # Kartengroesse der Kartenansicht: "large" (hoechstens 4 Spalten, grosse
+    # Bilder), "medium" (bis 6 Spalten) oder "small" (bis 10 Spalten, nur Bild,
+    # Name, Status und Stunden - als Gesamtuebersicht).
+    "card_size": "large",
+    # Aussehen: Farbthema (midnight, graphit, nachtrot, waldgruen, violett) und
+    # Modus (auto = wie Windows, light, dark).
+    "theme_palette": "midnight",
+    "theme_mode": "auto",
     # Manuell gesetzter Bildausschnitt der Kartenansicht je Projekt:
     # Schluessel = Projektordnerpfad (bei archivierten Projekten ohne Ordner
     # "archiv:<Name>"), Wert = [x, y] (Mittelpunkt des Ausschnitts, 0..1),
@@ -171,7 +179,7 @@ ALWAYS_EXCLUDED_FOLDER_NAMES = {"astrologbuch"}
 # Bei jeder inhaltlichen Aenderung erhoehen und einen Eintrag in
 # CHANGELOG.txt ergaenzen (siehe dort). Wird im Dashboard (Kopfzeile
 # rechts) angezeigt, damit erkennbar ist, welcher Stand gerade laeuft.
-APP_VERSION = "1.10.0"
+APP_VERSION = "1.11.0"
 
 CONFIG_FILENAME = "AstroLogbuch_config.json"
 ARCHIVE_FILENAME = "AstroLogbuch_archive.json"
@@ -188,6 +196,9 @@ EXCLUDE_FOLDER_NAMES = set(DEFAULT_CONFIG["exclude_folder_names"]) | ALWAYS_EXCL
 SHOW_THUMBNAILS = DEFAULT_CONFIG["show_thumbnails"]
 PREVIEW_OVERRIDES = dict(DEFAULT_CONFIG["preview_overrides"])
 VIEW_MODE = DEFAULT_CONFIG["view_mode"]
+CARD_SIZE = DEFAULT_CONFIG["card_size"]
+THEME_PAL = DEFAULT_CONFIG["theme_palette"]
+THEME_MODE = DEFAULT_CONFIG["theme_mode"]
 FOCUS_OVERRIDES = dict(DEFAULT_CONFIG["focus_overrides"])
 SPLIT_SUBFOLDERS = DEFAULT_CONFIG["split_subfolders"]
 SPLIT_SUBFOLDER_CATEGORIES = set(DEFAULT_CONFIG["split_subfolder_categories"])
@@ -277,7 +288,7 @@ def apply_config(cfg):
     verwendeten Variablen. Wird beim Start und nach jedem Speichern der
     Einstellungen im Programmfenster aufgerufen."""
     global ROOT_FOLDER, LATITUDE, EXCLUDE_FOLDER_NAMES, CAMERA_MAP, \
-        FILTER_MAP, CALIB_WORDS, SHOW_THUMBNAILS, ONLINE_LOOKUP_ENABLED, PREVIEW_OVERRIDES, VIEW_MODE, FOCUS_OVERRIDES, \
+        FILTER_MAP, CALIB_WORDS, SHOW_THUMBNAILS, ONLINE_LOOKUP_ENABLED, PREVIEW_OVERRIDES, VIEW_MODE, CARD_SIZE, THEME_PAL, THEME_MODE, FOCUS_OVERRIDES, \
         SPLIT_SUBFOLDERS, SPLIT_SUBFOLDER_CATEGORIES, HIDDEN_PROJECTS
     ROOT_FOLDER = str(cfg.get("root_folder") or "")
     try:
@@ -301,6 +312,9 @@ def apply_config(cfg):
     overrides = cfg.get("preview_overrides", {})
     PREVIEW_OVERRIDES = canonical_overrides(overrides)
     VIEW_MODE = "cards" if cfg.get("view_mode") == "cards" else "table"
+    CARD_SIZE = cfg.get("card_size") if cfg.get("card_size") in ("large", "medium", "small") else "large"
+    THEME_PAL = cfg.get("theme_palette") if cfg.get("theme_palette") in ("midnight", "graphit", "nachtrot", "waldgruen", "violett") else "midnight"
+    THEME_MODE = cfg.get("theme_mode") if cfg.get("theme_mode") in ("auto", "light", "dark") else "auto"
     focus = cfg.get("focus_overrides", {})
     FOCUS_OVERRIDES = canonical_overrides(focus)
     SPLIT_SUBFOLDERS = bool(cfg.get("split_subfolders", False))
@@ -16017,6 +16031,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="de">
 <head>
 <meta charset="utf-8">
+<script>
+// Farbthema + Modus sofort setzen, bevor die Seite gezeichnet wird.
+(function(){
+  var pal = "%%THEME_PAL%%", mode = "%%THEME_MODE%%";
+  var dark = mode === "dark" || (mode !== "light" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-pal", pal);
+  document.documentElement.setAttribute("data-mode", dark ? "dark" : "light");
+})();
+</script>
 <title>AstroLogbuch</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -16048,6 +16071,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       color-scheme: dark;
     }
   }
+  /* Farbthemen (Einstellungen > Aussehen): je Thema eine helle und eine dunkle
+     Palette, ausgewaehlt ueber data-pal/data-mode am <html>-Element (siehe
+     applyAppearance() im JS-Teil). Statusfarben sind je Palette einzeln
+     abgestimmt, damit alles lesbar bleibt. "midnight" entspricht den
+     bisherigen Farben. */
+  html[data-pal="midnight"][data-mode="dark"]{ --bg:#0d1119; --surface:#151b28; --surface-2:#1c2434; --surface-3:#253045; --border:#2b3548; --border-soft:#212a3a; --text:#e9ecf3; --text-dim:#a3acc2; --text-faint:#848ca5; --accent:#e4a15c; --accent-soft:#3a2d1c; --good:#6fc190; --good-soft:#16281f; --warn:#e4b95c; --warn-soft:#2f2717; --bad:#e2836f; --bad-soft:#2f1e1a; --neutral:#8892ab; --neutral-soft:#1c2230; --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -16px rgba(0,0,0,.6); color-scheme:dark; }
+  html[data-pal="midnight"][data-mode="light"]{ --bg:#f6f4ee; --surface:#ffffff; --surface-2:#eeece2; --surface-3:#e4e1d2; --border:#dbd6c6; --border-soft:#e8e4d6; --text:#20241f; --text-dim:#5c6156; --text-faint:#66695e; --accent:#a05629; --accent-soft:#f0dcc4; --good:#366e4a; --good-soft:#dcead9; --warn:#825e19; --warn-soft:#f2e6c8; --bad:#a13f34; --bad-soft:#f3ddd6; --neutral:#5c626e; --neutral-soft:#e7e6df; --shadow:0 1px 2px rgba(30,25,10,.06), 0 8px 24px -12px rgba(30,25,10,.15); color-scheme:light; }
+  html[data-pal="graphit"][data-mode="dark"]{ --bg:#121214; --surface:#1b1b1e; --surface-2:#242428; --surface-3:#2f2f34; --border:#3a3a41; --border-soft:#2a2a30; --text:#ececef; --text-dim:#b0b0ba; --text-faint:#90909b; --accent:#9db7d9; --accent-soft:#26303f; --good:#78c796; --good-soft:#1d2b22; --warn:#e0bb62; --warn-soft:#2e2916; --bad:#e58a7a; --bad-soft:#2f1f1c; --neutral:#9094a0; --neutral-soft:#25252b; --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -16px rgba(0,0,0,.6); color-scheme:dark; }
+  html[data-pal="graphit"][data-mode="light"]{ --bg:#f1f1f3; --surface:#ffffff; --surface-2:#e8e8eb; --surface-3:#dcdce1; --border:#cfcfd6; --border-soft:#e2e2e7; --text:#1d1d21; --text-dim:#55555e; --text-faint:#66666f; --accent:#3d5a80; --accent-soft:#dbe4f0; --good:#2b6e45; --good-soft:#dcebe1; --warn:#805a17; --warn-soft:#f1e5c6; --bad:#a23c32; --bad-soft:#f2dcd8; --neutral:#616570; --neutral-soft:#e6e6eb; --shadow:0 1px 2px rgba(30,25,10,.06), 0 8px 24px -12px rgba(30,25,10,.15); color-scheme:light; }
+  html[data-pal="nachtrot"][data-mode="dark"]{ --bg:#0f0606; --surface:#1a0c0c; --surface-2:#251111; --surface-3:#331919; --border:#4a2323; --border-soft:#361a1a; --text:#f3d9d5; --text-dim:#c79d97; --text-faint:#9f7e79; --accent:#ff6b57; --accent-soft:#3b1613; --good:#8fbf84; --good-soft:#1b2a1a; --warn:#e8b45a; --warn-soft:#33270f; --bad:#ff7a66; --bad-soft:#3a1713; --neutral:#a8827d; --neutral-soft:#2a1515; --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -16px rgba(0,0,0,.6); color-scheme:dark; }
+  html[data-pal="nachtrot"][data-mode="light"]{ --bg:#f7ecea; --surface:#fff8f6; --surface-2:#f0dedb; --surface-3:#e6cdc9; --border:#d9bab5; --border-soft:#ecd5d1; --text:#2a1412; --text-dim:#6b4540; --text-faint:#7c5b56; --accent:#b3261e; --accent-soft:#f6d3cf; --good:#2b6e45; --good-soft:#dcebe1; --warn:#805a17; --warn-soft:#f1e5c6; --bad:#a13f34; --bad-soft:#f3ddd6; --neutral:#745d59; --neutral-soft:#eadedc; --shadow:0 1px 2px rgba(30,25,10,.06), 0 8px 24px -12px rgba(30,25,10,.15); color-scheme:light; }
+  html[data-pal="waldgruen"][data-mode="dark"]{ --bg:#0b1210; --surface:#121c18; --surface-2:#19261f; --surface-3:#233328; --border:#2f4538; --border-soft:#1e2f26; --text:#e4efe8; --text-dim:#9fb8a8; --text-faint:#7a9384; --accent:#d6c27a; --accent-soft:#2c2a17; --good:#6fc190; --good-soft:#15291f; --warn:#e4b95c; --warn-soft:#2f2717; --bad:#e2836f; --bad-soft:#2f1e1a; --neutral:#86a193; --neutral-soft:#1b2822; --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -16px rgba(0,0,0,.6); color-scheme:dark; }
+  html[data-pal="waldgruen"][data-mode="light"]{ --bg:#eef3ee; --surface:#fbfdfb; --surface-2:#e1ebe2; --surface-3:#d1dfd3; --border:#bfd0c3; --border-soft:#d9e5db; --text:#1b261f; --text-dim:#4d6455; --text-faint:#59685e; --accent:#83681d; --accent-soft:#efe3bf; --good:#296e45; --good-soft:#d6ebdd; --warn:#805a17; --warn-soft:#f1e5c6; --bad:#a13f34; --bad-soft:#f3ddd6; --neutral:#57655c; --neutral-soft:#e1e8e3; --shadow:0 1px 2px rgba(30,25,10,.06), 0 8px 24px -12px rgba(30,25,10,.15); color-scheme:light; }
+  html[data-pal="violett"][data-mode="dark"]{ --bg:#110d1c; --surface:#1a1428; --surface-2:#231b36; --surface-3:#30254a; --border:#3f3160; --border-soft:#2c2245; --text:#ece8f7; --text-dim:#b3a9d1; --text-faint:#9188ae; --accent:#b69cff; --accent-soft:#2e2450; --good:#6fc190; --good-soft:#16281f; --warn:#e4b95c; --warn-soft:#2f2717; --bad:#e2836f; --bad-soft:#2f1e1a; --neutral:#8d86ab; --neutral-soft:#211c33; --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -16px rgba(0,0,0,.6); color-scheme:dark; }
+  html[data-pal="violett"][data-mode="light"]{ --bg:#f4f1fa; --surface:#ffffff; --surface-2:#ebe6f5; --surface-3:#ddd5ee; --border:#cfc5e6; --border-soft:#e2dbf0; --text:#231c33; --text-dim:#5a5075; --text-faint:#6a6380; --accent:#6a41c9; --accent-soft:#e3d9f8; --good:#2b6e45; --good-soft:#dcebe1; --warn:#805a17; --warn-soft:#f1e5c6; --bad:#a13f34; --bad-soft:#f3ddd6; --neutral:#636076; --neutral-soft:#e8e5f0; --shadow:0 1px 2px rgba(30,25,10,.06), 0 8px 24px -12px rgba(30,25,10,.15); color-scheme:light; }
   *{box-sizing:border-box;}
   body{ margin:0; background:var(--bg); color:var(--text); font-family:'IBM Plex Sans', system-ui, sans-serif; font-size:14.5px; line-height:1.5; }
   .num{ font-family:'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric:tabular-nums; }
@@ -16126,6 +16164,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
      bewusst Inline-SVG statt Unicode-Zeichen: Sonderzeichen wie das
      fruehere Sortier-Symbol wurden von manchen Schriftarten nicht
      abgedeckt. */
+  .theme-modes{ display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+  .theme-modes .btn.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .theme-swatches{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; margin-top:10px; }
+  .theme-swatch{ display:flex; flex-direction:column; gap:7px; padding:9px 10px; border:2px solid var(--border); border-radius:10px; background:var(--surface-2); color:var(--text); cursor:pointer; font:inherit; text-align:left; }
+  .theme-swatch:hover{ border-color:var(--accent); }
+  .theme-swatch.active{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .theme-swatch .chips{ display:flex; gap:4px; height:22px; }
+  .theme-swatch .chips i{ flex:1; border-radius:5px; border:1px solid rgba(128,128,128,.35); }
+  .theme-swatch .nm{ font-size:12.5px; font-weight:600; }
   .view-toggle{ display:flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
   .view-toggle button{ border:none; background:var(--surface-2); color:var(--text-dim); width:34px; height:32px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0; }
   .view-toggle button + button{ border-left:1px solid var(--border); }
@@ -16134,6 +16181,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .view-toggle svg{ width:16px; height:16px; fill:currentColor; }
   .card-sort{ font-family:'IBM Plex Sans', sans-serif; font-size:13px; padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); outline:none; }
   body.view-table .card-sort{ display:none; }
+  body.view-table .card-size{ display:none; }
   body.view-cards .tablewrap{ display:none; }
   body.view-table .cards-grid{ display:none; }
 
@@ -16153,6 +16201,30 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
      Obergrenze verhindert absurd grosse Karten auf extremen Ultrawide-
      Monitoren. */
   body.view-cards .wrap{ max-width:2800px; }
+  /* Kartengroesse (Umschalter neben der Ansichtswahl, Nutzerwunsch aus dem
+     Forum: mehr Projekte auf einen Blick). "medium": bis 6 Spalten.
+     "small": bis 10 Spalten als Gesamtuebersicht - nur Bild, Name, Status
+     und Stunden, das Textfeld entfaellt (bei so kleinen Karten nicht lesbar). */
+  body.cards-medium .cards-grid{ grid-template-columns:repeat(auto-fill,minmax(max(220px, calc((100% - 61px) / 6)),1fr)); gap:12px; }
+  body.cards-medium .pcard-name{ font-size:14px; }
+  body.cards-medium .pcard-hours{ font-size:18px; }
+  body.cards-medium .pcard-body{ padding:8px 10px 10px; gap:5px; }
+  body.cards-medium .pcard-chip{ font-size:10.5px; padding:1px 6px; }
+  body.cards-medium .pcard-meta, body.cards-medium .pcard-meta .obs-cell, body.cards-medium .pcard-cam, body.cards-medium .pcard-sub{ font-size:11px; }
+  body.cards-small .cards-grid{ grid-template-columns:repeat(auto-fill,minmax(max(150px, calc((100% - 91px) / 10)),1fr)); gap:10px; padding:12px; }
+  body.cards-small .pcard{ border-radius:9px; border-left-width:3px; }
+  body.cards-small .pcard-body{ display:none; }
+  body.cards-small .pcard-name{ font-size:11.5px; line-height:1.15; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  body.cards-medium .pcard-name{ display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  body.cards-small .pcard-hours{ font-size:13px; }
+  body.cards-small .pcard-hours small{ font-size:9px; }
+  body.cards-small .pcard-over{ left:7px; right:7px; bottom:6px; gap:6px; }
+  body.cards-small .pcard-status{ top:5px; left:6px; }
+  body.cards-small .pcard .pill{ font-size:9.5px; padding:1px 6px; }
+  body.cards-small .pcard-shade{ height:60%; }
+  body.cards-small .pcard-actions{ top:4px; right:4px; gap:3px; flex-wrap:wrap; justify-content:flex-end; }
+  body.cards-small .pcard-actions button{ font-size:9.5px; padding:1px 5px; border-radius:5px; }
+  body.cards-small .pcard-ph{ font-size:24px; }
   .pcard{ position:relative; border-radius:12px; overflow:hidden; background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--neutral); display:flex; flex-direction:column; }
   .pcard.has-path{ cursor:pointer; }
   .pcard.st-done{ border-left-color:var(--good); }
@@ -16171,6 +16243,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .pcard-shade{ position:absolute; left:0; right:0; bottom:0; height:42%; background:linear-gradient(to bottom, rgba(8,10,16,0) 0%, rgba(8,10,16,.72) 100%); pointer-events:none; }
   .pcard-status{ position:absolute; top:9px; left:10px; display:flex; }
   .pcard .pill{ background:rgba(20,24,34,.8) !important; backdrop-filter:blur(2px); font-size:11px; padding:2px 8px; }
+  /* Feste helle Schrift- und Punktfarben: Die Pille ist auf Karten immer
+     dunkel hinterlegt, die Statusfarben des hellen Farbschemas (dunkles
+     Gruen/Rot) waren darauf kaum lesbar. */
+  .pcard .pill.done{ color:#7fd99b !important; } .pcard .pill.done .dot{ background:#7fd99b !important; }
+  .pcard .pill.open{ color:#f0c069 !important; } .pcard .pill.open .dot{ background:#f0c069 !important; }
+  .pcard .pill.unclear{ color:#f29486 !important; } .pcard .pill.unclear .dot{ background:#f29486 !important; }
+  .pcard .pill.neutral{ color:#cfd3da !important; } .pcard .pill.neutral .dot{ background:#cfd3da !important; }
   .pcard-over{ position:absolute; left:12px; right:12px; bottom:9px; display:flex; align-items:flex-end; justify-content:space-between; gap:10px; color:#f4f4ef; pointer-events:none; }
   .pcard-name{ font-family:'IBM Plex Mono',monospace; font-size:clamp(17px,.95vw,23px); font-weight:600; line-height:1.2; text-shadow:0 1px 4px rgba(0,0,0,.7); }
   .pcard-hours{ font-family:'IBM Plex Mono',monospace; font-size:clamp(24px,1.4vw,34px); font-weight:600; color:#b3b0ff; line-height:1; white-space:nowrap; text-shadow:0 1px 4px rgba(0,0,0,.7); }
@@ -16459,6 +16538,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <p class="field-hint warn" id="cfgCalibWarn" hidden></p>
         </div>
         <div class="settings-field">
+          <label>Aussehen</label>
+          <p class="field-hint">Farbthema und Helligkeit wählen. Die Oberfläche zeigt die Auswahl sofort als Vorschau; dauerhaft gilt sie erst nach &quot;Speichern &amp; neu einlesen&quot;, &quot;Abbrechen&quot; stellt das bisherige Aussehen wieder her.</p>
+          <div class="theme-modes" id="themeModes">
+            <button type="button" class="btn tiny" data-mode="auto">Automatisch (wie Windows)</button>
+            <button type="button" class="btn tiny" data-mode="light">Hell</button>
+            <button type="button" class="btn tiny" data-mode="dark">Dunkel</button>
+          </div>
+          <div class="theme-swatches" id="themeSwatches"></div>
+        </div>
+        <div class="settings-field">
           <label>Ausgeblendete Projekte</label>
           <p class="field-hint">
             Ausgeblendete Projekte erscheinen nicht in Tabelle, Karten und Statistik, ihre Ordner bleiben unverändert.
@@ -16565,6 +16654,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <option value="category:1">Typ</option>
         <option value="obsSort:1">Beobachtungsfenster</option>
       </select>
+      <div class="view-toggle card-size" id="cardSize" title="Kartengröße">
+        <button type="button" data-size="small" title="Kleine Karten: Gesamtübersicht (nur Bild, Name, Status, Stunden)"><svg viewBox="0 0 16 16"><rect x="1" y="1" width="3.6" height="3.6" rx=".8"/><rect x="6.2" y="1" width="3.6" height="3.6" rx=".8"/><rect x="11.4" y="1" width="3.6" height="3.6" rx=".8"/><rect x="1" y="6.2" width="3.6" height="3.6" rx=".8"/><rect x="6.2" y="6.2" width="3.6" height="3.6" rx=".8"/><rect x="11.4" y="6.2" width="3.6" height="3.6" rx=".8"/><rect x="1" y="11.4" width="3.6" height="3.6" rx=".8"/><rect x="6.2" y="11.4" width="3.6" height="3.6" rx=".8"/><rect x="11.4" y="11.4" width="3.6" height="3.6" rx=".8"/></svg></button>
+        <button type="button" data-size="medium" title="Mittlere Karten"><svg viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.2"/><rect x="9" y="1" width="6" height="6" rx="1.2"/><rect x="1" y="9" width="6" height="6" rx="1.2"/><rect x="9" y="9" width="6" height="6" rx="1.2"/></svg></button>
+        <button type="button" data-size="large" title="Große Karten"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.6"/></svg></button>
+      </div>
       <div class="view-toggle" id="viewToggle">
         <button type="button" data-view="table" title="Tabellenansicht"><svg viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="2.4" rx="1"/><rect x="1" y="6.8" width="14" height="2.4" rx="1"/><rect x="1" y="11.6" width="14" height="2.4" rx="1"/></svg></button>
         <button type="button" data-view="cards" title="Kartenansicht"><svg viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.4"/><rect x="9" y="1" width="6" height="6" rx="1.4"/><rect x="1" y="9" width="6" height="6" rx="1.4"/><rect x="9" y="9" width="6" height="6" rx="1.4"/></svg></button>
@@ -16660,7 +16754,8 @@ let state = { status:"all", cat:"all", q:"", sortKey:"lastModified", sortDir:-1,
 // localStorage dient nur dem Browser-Fallback ohne pywebview, dort gibt es
 // keine Api zum Speichern.
 state.view = "%%VIEW_MODE%%" === "cards" ? "cards" : "table";
-if(!window.pywebview){ try{ const v = localStorage.getItem("astrologbuch_view"); if(v==="cards"||v==="table") state.view = v; }catch(e){} }
+state.cardSize = ["large", "medium", "small"].includes("%%CARD_SIZE%%") ? "%%CARD_SIZE%%" : "large";
+if(!window.pywebview){ try{ const v = localStorage.getItem("astrologbuch_view"); if(v==="cards"||v==="table") state.view = v; const cs = localStorage.getItem("astrologbuch_card_size"); if(["large","medium","small"].includes(cs)) state.cardSize = cs; }catch(e){} }
 
 // Kartenansicht: Filter-Chips mit Stunden je Filter. Die Stunden werden aus
 // der bereits vorhandenen Textzusammenfassung ("Ha 12x300s · R 6x180s")
@@ -17024,7 +17119,7 @@ function cardHtml(d){
     + (d.thumb ? `<button type="button" data-act="focus" title="Sichtbaren Bildausschnitt der Karte festlegen">Ausschnitt</button>` : "")
     + (d.path ? `<button type="button" data-act="pick" title="Vorschaubild wählen">Bild</button>` : "")
     + (d.status==="archived" ? `<button type="button" data-act="del" data-name="${encodeURIComponent(d.name)}" title="Archiv-Eintrag entfernen (löscht keine echten Dateien)">&times;</button>` : "");
-  return `<div class="pcard ${stCls}${d.path?" has-path":""}" data-key="${key}"${d.path?` data-path="${encodeURIComponent(d.path)}" title="Klick öffnet den Ordner"`:""}>
+  return `<div class="pcard ${stCls}${d.path?" has-path":""}" data-key="${key}"${d.path?` data-path="${encodeURIComponent(d.path)}" title="${escHtml(d.name)} – Klick öffnet den Ordner"`:` title="${escHtml(d.name)}"`}>
     <div class="pcard-media">
       ${img}<div class="pcard-shade"></div>
       <div class="pcard-status"><span class="pill ${meta.cls}"><span class="dot"></span>${meta.label}</span></div>
@@ -17049,6 +17144,9 @@ function applyView(){
   document.body.classList.toggle("view-cards", state.view==="cards");
   document.body.classList.toggle("view-table", state.view!=="cards");
   document.querySelectorAll("#viewToggle button").forEach(b=>b.classList.toggle("active", b.dataset.view===state.view));
+  document.body.classList.toggle("cards-medium", state.cardSize==="medium");
+  document.body.classList.toggle("cards-small", state.cardSize==="small");
+  document.querySelectorAll("#cardSize button").forEach(b=>b.classList.toggle("active", b.dataset.size===state.cardSize));
   const sel = document.getElementById("cardSort");
   const want = `${state.sortKey}:${state.sortDir}`;
   sel.selectedIndex = [...sel.options].findIndex(o=>o.value===want);
@@ -17391,6 +17489,16 @@ document.getElementById("nowBody").addEventListener("click", e=>{
   row.addEventListener("animationend", ()=> row.classList.remove("row-flash"), {once:true});
 });
 document.getElementById("searchBox").addEventListener("input", e=>{ state.q=e.target.value.trim().toLowerCase(); render(); });
+document.getElementById("cardSize").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-size]"); if(!b) return;
+  state.cardSize = b.dataset.size;
+  if(window.pywebview && window.pywebview.api && window.pywebview.api.set_card_size){
+    window.pywebview.api.set_card_size(state.cardSize);
+  } else {
+    try{ localStorage.setItem("astrologbuch_card_size", state.cardSize); }catch(err){}
+  }
+  applyView();
+});
 document.getElementById("viewToggle").addEventListener("click", e=>{
   const b = e.target.closest("button[data-view]"); if(!b) return;
   state.view = b.dataset.view;
@@ -17608,6 +17716,8 @@ function openSettings(){
     document.getElementById("cfgLatitude").value = cfg.latitude;
     document.getElementById("cfgOnlineLookup").checked = !!cfg.online_lookup_enabled;
     document.getElementById("cfgShowThumbnails").checked = !!cfg.show_thumbnails;
+    savedAppearance = {pal: cfg.theme_palette || "midnight", mode: cfg.theme_mode || "auto"};
+    applyAppearance(savedAppearance);
     document.getElementById("cfgSplitSub").checked = !!cfg.split_subfolders;
     const splitCats = cfg.split_subfolder_categories || ["Komet"];
     document.querySelectorAll("#splitCats input[data-split-cat]").forEach(cb=>{ cb.checked = splitCats.includes(cb.dataset.splitCat); });
@@ -17625,7 +17735,59 @@ function openSettings(){
     settingsOverlay.hidden = false;
   });
 }
-function closeSettings(){ settingsOverlay.hidden = true; }
+// ---------------------------------------------------------------------
+// Aussehen: fuenf Farbthemen x (hell/dunkel/automatisch), Live-Vorschau
+// ---------------------------------------------------------------------
+const THEMES = [
+  {id:"midnight",  name:"Mitternachtsblau", dark:["#0d1119","#151b28","#e4a15c"], light:["#f6f4ee","#ffffff","#a05629"]},
+  {id:"graphit",   name:"Graphit",          dark:["#121214","#1b1b1e","#9db7d9"], light:["#f1f1f3","#ffffff","#3d5a80"]},
+  {id:"nachtrot",  name:"Nachtrot",         dark:["#0f0606","#1a0c0c","#ff6b57"], light:["#f7ecea","#fff8f6","#b3261e"]},
+  {id:"waldgruen", name:"Waldgrün",         dark:["#0b1210","#121c18","#d6c27a"], light:["#eef3ee","#fbfdfb","#83681d"]},
+  {id:"violett",   name:"Violett",          dark:["#110d1c","#1a1428","#b69cff"], light:["#f4f1fa","#ffffff","#6a41c9"]},
+];
+let appearance = {pal:"%%THEME_PAL%%", mode:"%%THEME_MODE%%"};      // aktuell angezeigt (auch Vorschau)
+let savedAppearance = {...appearance};                                // zuletzt gespeichert
+function resolvedMode(mode){
+  if(mode === "dark" || mode === "light") return mode;
+  return (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+}
+function applyAppearance(a){
+  appearance = {pal:a.pal, mode:a.mode};
+  document.documentElement.setAttribute("data-pal", a.pal);
+  document.documentElement.setAttribute("data-mode", resolvedMode(a.mode));
+  renderAppearanceControls();
+}
+function renderAppearanceControls(){
+  document.querySelectorAll("#themeModes button").forEach(b=>b.classList.toggle("active", b.dataset.mode === appearance.mode));
+  const rm = resolvedMode(appearance.mode);
+  document.getElementById("themeSwatches").innerHTML = THEMES.map(t=>{
+    const c = t[rm];
+    return `<button type="button" class="theme-swatch${t.id===appearance.pal?" active":""}" data-pal="${t.id}">
+      <span class="chips"><i style="background:${c[0]}"></i><i style="background:${c[1]}"></i><i style="background:${c[2]}"></i></span>
+      <span class="nm">${t.name}</span></button>`;
+  }).join("");
+}
+document.getElementById("themeModes").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-mode]"); if(!b) return;
+  applyAppearance({pal:appearance.pal, mode:b.dataset.mode});
+});
+document.getElementById("themeSwatches").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-pal]"); if(!b) return;
+  applyAppearance({pal:b.dataset.pal, mode:appearance.mode});
+});
+// "Automatisch" folgt Aenderungen der Windows-Einstellung
+if(window.matchMedia){
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  const onMq = ()=>{ if(appearance.mode === "auto") applyAppearance(appearance); };
+  if(mq.addEventListener) mq.addEventListener("change", onMq); else if(mq.addListener) mq.addListener(onMq);
+}
+renderAppearanceControls();
+
+function closeSettings(){
+  // Nicht gespeicherte Vorschau verwerfen: bisheriges Aussehen wiederherstellen
+  if(appearance.pal !== savedAppearance.pal || appearance.mode !== savedAppearance.mode) applyAppearance(savedAppearance);
+  settingsOverlay.hidden = true;
+}
 
 // ----------------------------------------------------------------------
 // Erfasste Ordner
@@ -17802,6 +17964,8 @@ document.getElementById("saveSettingsBtn").addEventListener("click", ()=>{
     online_lookup_enabled: document.getElementById("cfgOnlineLookup").checked,
     show_thumbnails: document.getElementById("cfgShowThumbnails").checked,
     split_subfolders: document.getElementById("cfgSplitSub").checked,
+    theme_palette: appearance.pal,
+    theme_mode: appearance.mode,
     split_subfolder_categories: [...document.querySelectorAll("#splitCats input[data-split-cat]")].filter(cb=>cb.checked).map(cb=>cb.dataset.splitCat),
     exclude_folder_names: splitList(document.getElementById("cfgExcludeFolders").value),
     calib_words: splitList(document.getElementById("cfgCalibWords").value),
@@ -17822,6 +17986,7 @@ document.getElementById("saveSettingsBtn").addEventListener("click", ()=>{
   settingsStatus.className = "settings-status";
   window.pywebview.api.apply_settings(cfg).then(result=>{
     if(result.ok){
+      savedAppearance = {...appearance};
       settingsStatus.textContent = `Gespeichert, ${result.count} Projekte gefunden. Lade neu …`;
       settingsStatus.className = "settings-status ok";
       setTimeout(()=> location.reload(), 600);
@@ -17873,6 +18038,9 @@ def build_dashboard_html(projects, root_folder):
     out = out.replace("%%LATITUDE%%", str(LATITUDE))
     out = out.replace("%%APP_VERSION%%", APP_VERSION)
     out = out.replace("%%VIEW_MODE%%", VIEW_MODE)
+    out = out.replace("%%CARD_SIZE%%", CARD_SIZE)
+    out = out.replace("%%THEME_PAL%%", THEME_PAL)
+    out = out.replace("%%THEME_MODE%%", THEME_MODE)
     # "</" wird maskiert, damit der Text das <script>-Element nicht beenden kann
     out = out.replace("%%CHANGELOG_JSON%%",
                       json.dumps(load_changelog_text(), ensure_ascii=False).replace("</", "<\\/"))
@@ -18239,6 +18407,17 @@ class Api:
         cfg["focus_overrides"] = overrides
         save_config(self.config_path, cfg)
         FOCUS_OVERRIDES = overrides
+        return {"ok": True}
+
+    def set_card_size(self, size):
+        """Merkt sich die Kartengroesse der Kartenansicht (large/medium/small)
+        dauerhaft in der Config, ohne neu einzulesen."""
+        global CARD_SIZE
+        size = size if size in ("large", "medium", "small") else "large"
+        cfg = load_config(self.config_path)
+        cfg["card_size"] = size
+        save_config(self.config_path, cfg)
+        CARD_SIZE = size
         return {"ok": True}
 
     def set_view_mode(self, mode):
